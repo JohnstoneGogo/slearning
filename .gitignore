@@ -1,0 +1,8 @@
+node_modules
+.next
+uploads
+uploads/private/
+.env
+*.log
+next-env.d.ts
+tsconfig.tsbuildinfo

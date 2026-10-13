@@ -1,0 +1,12 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: slearning
+      POSTGRES_PASSWORD: slearning
+      POSTGRES_DB: slearning
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata:

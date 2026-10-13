@@ -1,0 +1,348 @@
+// S Learning data model. Money is stored as integers in minor units (5000 = GHS 50.00).
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client" // uses the pg driver adapter: no native query-engine binary to ship
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  memberId      String   @unique
+  username      String   @unique
+  email         String   @unique
+  fullName      String
+  country       String
+  phone         String
+  referrerId    Int?
+  referrer      User?    @relation("Referral", fields: [referrerId], references: [id])
+  referrals     User[]   @relation("Referral")
+  passwordHash  String
+  emailVerified Boolean  @default(false)
+  status        String   @default("registered") // registered | activated
+  eligible      Boolean  @default(false)
+  role          String   @default("member") // member | admin
+  suspended     Boolean  @default(false)
+  registeredAt  DateTime @default(now())
+  deadlineAt    DateTime
+  avatarUrl     String?
+  tokenVersion  Int      @default(0)
+
+  tokens        Token[]
+  enrollments   Enrollment[]
+  progress      LessonProgress[]
+  reviews       Review[]
+  bookmarks     Bookmark[]
+  notifications Notification[]
+  payments      Payment[]
+  ledger        LedgerEntry[]
+  withdrawals   Withdrawal[]
+  quizAttempts  QuizAttempt[]
+  posts         DiscussionPost[]
+  support       SupportRequest[]
+}
+
+model Token {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String // verify | reset
+  hash      String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+}
+
+model Setting {
+  key   String @id
+  value Json
+}
+
+model Category {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  thumbUrl    String?
+  sort        Int      @default(0)
+  courses     Course[]
+}
+
+model Course {
+  id             Int              @id @default(autoincrement())
+  categoryId     Int?
+  category       Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  title          String
+  author         String?
+  description    String?
+  coverUrl       String?
+  minutes        Int              @default(60)
+  level          String           @default("Beginner")
+  language       String           @default("English")
+  learnPoints    Json             @default("[]")
+  skills         String           @default("")
+  rating         Float            @default(0)
+  ratingCount    Int              @default(0)
+  rewardEligible Boolean          @default(false)
+  published      Boolean          @default(true)
+  enrolments     Int              @default(0)
+  createdAt      DateTime         @default(now())
+  lessons        Lesson[]
+  enrollments    Enrollment[]
+  reviews        Review[]
+  progress       LessonProgress[]
+  bookmarks      Bookmark[]
+  quizzes        Quiz[]
+  posts          DiscussionPost[]
+
+  @@index([published, categoryId])
+}
+
+model Lesson {
+  id        Int              @id @default(autoincrement())
+  courseId  Int
+  course    Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title     String
+  kind      String           @default("text") // text | video | pdf | quiz
+  content   String?
+  url       String? // video URL, or "private:<file>" for uploaded PDFs
+  minutes   Int              @default(10)
+  preview   Boolean          @default(false)
+  sort      Int              @default(0)
+  progress  LessonProgress[]
+  resources LessonResource[]
+  quiz      Quiz?
+
+  @@index([courseId, sort])
+}
+
+// Downloadable attachments (PDF worksheets, slide decks, templates) attached to a lesson.
+model LessonResource {
+  id       Int      @id @default(autoincrement())
+  lessonId Int
+  lesson   Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  title    String
+  url      String // "private:<file>" for uploaded files, or an external https link
+  kind     String   @default("pdf") // pdf | file
+  size     Int? // bytes, when known
+  sort     Int      @default(0)
+
+  @@index([lessonId, sort])
+}
+
+// One quiz per lesson. Pass mark is a percentage (default 70).
+model Quiz {
+  id            Int            @id @default(autoincrement())
+  lessonId      Int            @unique
+  lesson        Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  courseId      Int
+  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title         String         @default("Lesson quiz")
+  passPercent   Int            @default(70)
+  questions     QuizQuestion[]
+  attempts      QuizAttempt[]
+  createdAt     DateTime       @default(now())
+
+  @@index([courseId])
+}
+
+model QuizQuestion {
+  id          Int      @id @default(autoincrement())
+  quizId      Int
+  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  prompt      String
+  options     Json     @default("[]") // array of answer strings
+  answerIndex Int      @default(0)
+  explanation String?
+  sort        Int      @default(0)
+
+  @@index([quizId, sort])
+}
+
+model QuizAttempt {
+  id          Int      @id @default(autoincrement())
+  quizId      Int
+  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score       Int // correct answers
+  total       Int
+  percent     Int
+  passed      Boolean  @default(false)
+  answers     Json     @default("[]") // array of chosen option indexes
+  createdAt   DateTime @default(now())
+
+  @@index([userId, quizId])
+}
+
+// Learner discussion thread attached to a course (and optionally one lesson).
+model DiscussionPost {
+  id        Int      @id @default(autoincrement())
+  courseId  Int
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessonId  Int?
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  status    String   @default("published") // published | hidden
+  createdAt DateTime @default(now())
+
+  @@index([courseId, createdAt])
+}
+
+// Support requests submitted from the app; reviewed by admins in the CMS.
+model SupportRequest {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name      String
+  email     String
+  subject   String
+  body      String
+  category  String   @default("general") // general | payments | courses | account
+  status    String   @default("open") // open | in_progress | resolved | closed
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model Enrollment {
+  userId      Int
+  courseId    Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  certCode    String?   @unique
+
+  @@id([userId, courseId])
+}
+
+model LessonProgress {
+  userId   Int
+  lessonId Int
+  courseId Int
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson   Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course   Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  doneAt   DateTime @default(now())
+
+  @@id([userId, lessonId])
+  @@index([userId, courseId])
+}
+
+model Review {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  courseId  Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  rating    Int
+  body      String   @default("")
+  status    String   @default("published") // published | hidden
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+  @@index([courseId, status])
+}
+
+model Bookmark {
+  userId   Int
+  courseId Int
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@id([userId, courseId])
+}
+
+model Fact {
+  id       Int     @id @default(autoincrement())
+  title    String
+  body     String
+  imageUrl String?
+  linkUrl  String?
+  active   Boolean @default(true)
+}
+
+model Page {
+  slug      String   @id
+  title     String
+  body      String
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+model Payment {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reference String   @unique
+  amount    Int
+  currency  String
+  provider  String
+  status    String   @default("pending") // pending | success | failed | mismatch
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, status])
+}
+
+// Immutable ledger. Balances are ALWAYS derived from these rows, never stored.
+model LedgerEntry {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account   String // pending | available | held | withdrawn
+  amount    Int
+  kind      String
+  ref       String
+  createdAt DateTime @default(now())
+
+  @@unique([ref, account])
+  @@index([userId, account])
+}
+
+model Withdrawal {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount         Int
+  fee            Int
+  currency       String
+  method         String
+  bankCode       String?
+  accountName    String
+  accountNumber  String
+  status         String   @default("processing") // processing | review | completed | failed
+  idempotencyKey String
+  recipientCode  String?
+  providerRef    String?
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, status])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  actor     Int?
+  action    String
+  detail    Json     @default("{}")
+  createdAt DateTime @default(now())
+}
