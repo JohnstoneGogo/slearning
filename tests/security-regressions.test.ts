@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isLessonInPublishedCourse } from '../src/server/lesson-access';
 import { getSeedAdminCredentials } from '../src/server/seed-admin';
+import { canAccessCourse } from '../src/server/course-access';
 
 test('seed admin credentials require an explicit strong password', () => {
   assert.throws(
@@ -42,4 +43,14 @@ test('seed admin credentials require an explicit strong password', () => {
 test('lesson access is allowed only when its course is published', () => {
   assert.equal(isLessonInPublishedCourse({ course: { published: false } }), false);
   assert.equal(isLessonInPublishedCourse({ course: { published: true } }), true);
+});
+
+test('course access respects previews, zero prices, activation, and paid entitlements', () => {
+  const noAccess = { activated: false, preview: false, price: 5000, paidAt: null };
+  assert.equal(canAccessCourse(noAccess), false);
+  assert.equal(canAccessCourse({ ...noAccess, preview: true }), true);
+  assert.equal(canAccessCourse({ ...noAccess, activated: true }), true);
+  assert.equal(canAccessCourse({ ...noAccess, price: 0 }), true);
+  assert.equal(canAccessCourse({ ...noAccess, paidAt: new Date() }), true);
+  assert.equal(canAccessCourse({ ...noAccess, price: null }), false);
 });

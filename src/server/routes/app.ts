@@ -10,6 +10,7 @@ import { cookieHeader, signToken, userFrom } from '../auth';
 import { mail } from '../mail';
 import { member, pub, Res } from '../router';
 import { isLessonInPublishedCourse } from '../lesson-access';
+import { canAccessCourse } from '../course-access';
 import * as data from '../data';
 import '../payments';
 
@@ -239,7 +240,7 @@ member('POST', '/me/activate', async ({ user }) => {
     await lockUser(tx, user.id);
     const u = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
     if (u.status === 'activated') fail(409, 'Your account is already active.');
-    const p = await tx.payment.findFirst({ where: { userId: u.id, status: 'success', consumed: false }, orderBy: { id: 'desc' } });
+    const p = await tx.payment.findFirst({ where: { userId: u.id, kind: 'activation', status: 'success', consumed: false }, orderBy: { id: 'desc' } });
     if (!p) fail(402, 'We could not find a verified payment for this account.');
     if (!(await tx.payment.updateMany({ where: { id: p!.id, consumed: false }, data: { consumed: true } })).count)
       fail(409, 'This payment was already used.');
@@ -287,17 +288,33 @@ member('GET', '/me/bookmarks', async ({ user }) =>
 
 member('GET', '/courses/:id/me', async ({ user, params }) => {
   const id = +params.id;
-  const e = await prisma.enrollment.findUnique({ where: { userId_courseId: { userId: user.id, courseId: id } } });
-  const pc = await percents(user.id, [id]);
+  const [course, e] = await Promise.all([
+    prisma.course.findFirst({ where: { id, published: true }, select: { priceGhs: true, priceNgn: true } }),
+    prisma.enrollment.findUnique({ where: { userId_courseId: { userId: user.id, courseId: id } } }),
+  ]);
+  if (!course) return fail(404, 'Course not found.');
+  const price = user.country === 'GH' ? course.priceGhs : course.priceNgn;
+  const [pc, pending] = await Promise.all([
+    percents(user.id, [id]),
+    prisma.payment.findFirst({ where: { userId: user.id, kind: 'course', courseId: id, status: 'pending' }, orderBy: { id: 'desc' }, select: { reference: true } }),
+  ]);
   return {
     enrolled: !!e, percent: e ? pc(id) : 0, completed: !!e?.completedAt, cert_code: e?.certCode ?? null,
+    has_access: canAccessCourse({ activated: user.status === 'activated', preview: false, price, paidAt: e?.paidAt ?? null }),
+    price, currency: CUR[user.country], pending_payment: pending?.reference ?? null,
     done: (await prisma.lessonProgress.findMany({ where: { userId: user.id, courseId: id }, select: { lessonId: true } })).map(r => r.lessonId),
     bookmarked: !!(await prisma.bookmark.findUnique({ where: { userId_courseId: { userId: user.id, courseId: id } } })),
   };
 });
 
 member('POST', '/courses/:id/enroll', async ({ user, params }) => {
-  if (!(await prisma.course.findFirst({ where: { id: +params.id, published: true } }))) fail(404, 'Course not found.');
+  const id = +params.id;
+  const course = await prisma.course.findFirst({ where: { id, published: true }, select: { priceGhs: true, priceNgn: true } });
+  if (!course) return fail(404, 'Course not found.');
+  const enrollment = await prisma.enrollment.findUnique({ where: { userId_courseId: { userId: user.id, courseId: id } } });
+  const price = user.country === 'GH' ? course.priceGhs : course.priceNgn;
+  if (!canAccessCourse({ activated: user.status === 'activated', preview: false, price, paidAt: enrollment?.paidAt ?? null }))
+    fail(402, 'Purchase this course to enroll.');
   await enrol(prisma, user.id, +params.id);
   return { ok: true };
 });
@@ -312,10 +329,13 @@ member('POST', '/courses/:id/bookmark', async ({ user, params }) => {
 member('GET', '/lessons/:id', async ({ user, params }) => {
   const lesson = await prisma.lesson.findUnique({
     where: { id: +params.id },
-    include: { course: { select: { published: true } } },
+    include: { course: { select: { published: true, priceGhs: true, priceNgn: true } } },
   }) ?? fail(404, 'Lesson not found.');
   if (!isLessonInPublishedCourse(lesson)) fail(404, 'Lesson not found.');
-  if (!lesson.preview && user.status !== 'activated') fail(402, 'Activate your account to open this lesson.');
+  const enrollment = await prisma.enrollment.findUnique({ where: { userId_courseId: { userId: user.id, courseId: lesson.courseId } } });
+  const price = user.country === 'GH' ? lesson.course.priceGhs : lesson.course.priceNgn;
+  if (!canAccessCourse({ activated: user.status === 'activated', preview: lesson.preview, price, paidAt: enrollment?.paidAt ?? null }))
+    fail(402, price == null ? 'Activate your account or contact support to access this course.' : 'Purchase this course to open this lesson.');
   await enrol(prisma, user.id, lesson.courseId);
   const { course: _course, ...l } = lesson;
   const [resources, quiz] = await Promise.all([
@@ -332,7 +352,12 @@ member('POST', '/quizzes/:id/attempt', async ({ user, params, json }) => {
     include: { questions: { orderBy: [{ sort: 'asc' }, { id: 'asc' }] }, lesson: { select: { courseId: true, preview: true } } },
   }) ?? fail(404, 'Quiz not found.');
   if (!quiz.questions.length) fail(400, 'This quiz has no questions yet.');
-  if (!quiz.lesson.preview && user.status !== 'activated') fail(402, 'Activate your account to take this quiz.');
+  const course = await prisma.course.findFirst({ where: { id: quiz.lesson.courseId, published: true }, select: { priceGhs: true, priceNgn: true } });
+  if (!course) return fail(404, 'Quiz not found.');
+  const enrollment = await prisma.enrollment.findUnique({ where: { userId_courseId: { userId: user.id, courseId: quiz.lesson.courseId } } });
+  const price = user.country === 'GH' ? course.priceGhs : course.priceNgn;
+  if (!canAccessCourse({ activated: user.status === 'activated', preview: quiz.lesson.preview, price, paidAt: enrollment?.paidAt ?? null }))
+    fail(402, price == null ? 'Activate your account or contact support to take this quiz.' : 'Purchase this course to take this quiz.');
   const raw = await json() as Record<string, unknown>;
   const chosen = Array.isArray(raw.answers) ? raw.answers : [];
   let score = 0;
@@ -407,10 +432,13 @@ pub('GET', '/files/:name', async ({ params, query }) => {
 member('POST', '/lessons/:id/complete', async ({ user, params }) => {
   const lesson = await prisma.lesson.findUnique({
     where: { id: +params.id },
-    include: { course: { select: { published: true } } },
+    include: { course: { select: { published: true, priceGhs: true, priceNgn: true } } },
   }) ?? fail(404, 'Lesson not found.');
   if (!isLessonInPublishedCourse(lesson)) fail(404, 'Lesson not found.');
-  if (!lesson.preview && user.status !== 'activated') fail(402, 'Activate your account to continue.');
+  const enrollment = await prisma.enrollment.findUnique({ where: { userId_courseId: { userId: user.id, courseId: lesson.courseId } } });
+  const price = user.country === 'GH' ? lesson.course.priceGhs : lesson.course.priceNgn;
+  if (!canAccessCourse({ activated: user.status === 'activated', preview: lesson.preview, price, paidAt: enrollment?.paidAt ?? null }))
+    fail(402, price == null ? 'Activate your account or contact support to continue.' : 'Purchase this course to continue.');
   const l = lesson;
   const courseReward = await cfg<Record<string, number>>('course_reward');
   return prisma.$transaction(async tx => {

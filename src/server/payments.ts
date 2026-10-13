@@ -11,23 +11,87 @@ export async function confirmPayment(reference: string, amount: number, currency
   if (!p) return null;
   if (p.status !== 'pending' || status === 'pending') return p; // idempotent: repeats change nothing
   const next = status !== 'success' ? 'failed' : amount !== p.amount || currency !== p.currency ? 'mismatch' : 'success';
-  const r = await prisma.payment.updateMany({ where: { id: p.id, status: 'pending' }, data: { status: next } }); // atomic gate
-  if (r.count && next === 'success') await notify(prisma, p.userId, 'Payment received', 'Your payment is confirmed. You can now activate your account.', '/activate');
-  if (r.count && next === 'mismatch') await audit(null, 'payment_mismatch', { reference, amount, currency });
+  if (p.kind === 'course' && !p.courseId) throw new Error(`Course payment ${reference} has no course ID.`);
+  const updated = await prisma.$transaction(async tx => {
+    const r = await tx.payment.updateMany({ where: { id: p.id, status: 'pending' }, data: { status: next } }); // atomic gate
+    if (!r.count) return false;
+    if (next === 'success' && p.kind === 'course') {
+      const courseId = p.courseId!;
+      const paidAt = new Date();
+      const created = await tx.enrollment.createMany({ data: [{ userId: p.userId, courseId, paidAt }], skipDuplicates: true });
+      if (created.count) await tx.course.update({ where: { id: courseId }, data: { enrolments: { increment: 1 } } });
+      else await tx.enrollment.update({ where: { userId_courseId: { userId: p.userId, courseId } }, data: { paidAt } });
+      const course = await tx.course.findUniqueOrThrow({ where: { id: courseId }, select: { title: true } });
+      await notify(tx, p.userId, 'Course payment received', `Your payment for "${course.title}" is confirmed. You can start learning.`, `/learn/${courseId}`);
+    } else if (next === 'success') {
+      await notify(tx, p.userId, 'Payment received', 'Your payment is confirmed. You can now activate your account.', '/activate');
+    }
+    return true;
+  });
+  if (updated && next === 'mismatch') await audit(null, 'payment_mismatch', { reference, amount, currency });
+  if (!updated) return prisma.payment.findUnique({ where: { reference } });
   return { ...p, status: next };
 }
+
+const grantCourseEnrollment = async (userId: number, courseId: number, paidAt?: Date) => prisma.$transaction(async tx => {
+  const created = await tx.enrollment.createMany({
+    data: [{ userId, courseId, ...(paidAt ? { paidAt } : {}) }],
+    skipDuplicates: true,
+  });
+  if (created.count) await tx.course.update({ where: { id: courseId }, data: { enrolments: { increment: 1 } } });
+  if (paidAt && !created.count)
+    await tx.enrollment.update({ where: { userId_courseId: { userId, courseId } }, data: { paidAt } });
+});
 
 member('POST', '/payments/activation', async ({ user: u }) => {
   await limit('pay:' + u.id, 10, 3600e3);
   if (u.status === 'activated') fail(409, 'Your account is already active.');
   if (!u.emailVerified) fail(403, 'Verify your email address before paying.');
-  const open = await prisma.payment.findFirst({ where: { userId: u.id, status: 'pending', createdAt: { gt: new Date(Date.now() - 30 * 60e3) } } });
+  const open = await prisma.payment.findFirst({ where: { userId: u.id, kind: 'activation', status: 'pending', createdAt: { gt: new Date(Date.now() - 30 * 60e3) } } });
   if (open) return { payment: open, message: 'Your payment is still being verified. Please do not pay again while this transaction is pending.' };
   const P = provider(), reference = 'act_' + crypto.randomUUID().replace(/-/g, ''), amount = (await cfg<Record<string, number>>('activation_fee'))[u.country];
-  await prisma.payment.create({ data: { userId: u.id, reference, amount, currency: CUR[u.country], provider: P.name } });
+  await prisma.payment.create({ data: { userId: u.id, kind: 'activation', reference, amount, currency: CUR[u.country], provider: P.name } });
   let url: string | null = null;
   try { url = (await P.initialize({ reference, amount, currency: CUR[u.country], email: u.email, callbackUrl: `${APP_URL}/pay-return`, metadata: { user_id: u.id, member_id: u.memberId } })).url; }
   catch { await prisma.payment.update({ where: { reference }, data: { status: 'failed' } }); fail(502, 'We could not start the payment. Please try again in a moment.'); }
+  return new Res({ payment: await prisma.payment.findUnique({ where: { reference } }), checkout_url: url }, 201);
+});
+member('POST', '/payments/courses/:id', async ({ user: u, params }) => {
+  await limit('course-pay:' + u.id, 10, 3600e3);
+  if (u.status === 'activated') fail(409, 'Your active account already includes course access.');
+  if (!u.emailVerified) fail(403, 'Verify your email address before paying.');
+  const id = Number(params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(404, 'Course not found.');
+  const course = await prisma.course.findFirst({
+    where: { id, published: true },
+    select: { id: true, title: true, priceGhs: true, priceNgn: true },
+  });
+  if (!course) return fail(404, 'Course not found.');
+  const amount = u.country === 'GH' ? course.priceGhs : course.priceNgn;
+  if (amount == null) return fail(409, 'This course is not priced yet. Please check back later.');
+  if (!Number.isSafeInteger(amount) || amount < 0) throw new Error(`Course ${id} has an invalid configured price.`);
+  if (amount === 0) {
+    await grantCourseEnrollment(u.id, id);
+    return { unlocked: true };
+  }
+  const existing = await prisma.enrollment.findUnique({ where: { userId_courseId: { userId: u.id, courseId: id } } });
+  if (existing?.paidAt) return { unlocked: true };
+  const open = await prisma.payment.findFirst({
+    where: { userId: u.id, kind: 'course', courseId: id, status: 'pending', createdAt: { gt: new Date(Date.now() - 30 * 60e3) } },
+  });
+  if (open) return { payment: open, message: 'Your course payment is still being verified. Please do not pay again while this transaction is pending.' };
+  const P = provider(), reference = 'crs_' + crypto.randomUUID().replace(/-/g, ''), currency = CUR[u.country];
+  await prisma.payment.create({ data: { userId: u.id, kind: 'course', courseId: id, reference, amount, currency, provider: P.name } });
+  let url: string | null = null;
+  try {
+    url = (await P.initialize({
+      reference, amount, currency, email: u.email, callbackUrl: `${APP_URL}/pay-return`,
+      metadata: { user_id: u.id, course_id: id, course_title: course.title, member_id: u.memberId },
+    })).url;
+  } catch {
+    await prisma.payment.update({ where: { reference }, data: { status: 'failed' } });
+    fail(502, 'We could not start the payment. Please try again in a moment.');
+  }
   return new Res({ payment: await prisma.payment.findUnique({ where: { reference } }), checkout_url: url }, 201);
 });
 member('GET', '/payments/:ref', async ({ user, params }) => {

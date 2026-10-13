@@ -85,6 +85,8 @@ model Course {
   rating         Float            @default(0)
   ratingCount    Int              @default(0)
   rewardEligible Boolean          @default(false)
+  priceGhs       Int?
+  priceNgn       Int?
   published      Boolean          @default(true)
   enrolments     Int              @default(0)
   createdAt      DateTime         @default(now())
@@ -95,6 +97,7 @@ model Course {
   bookmarks      Bookmark[]
   quizzes        Quiz[]
   posts          DiscussionPost[]
+  payments       Payment[]
 
   @@index([published, categoryId])
 }
@@ -217,6 +220,7 @@ model Enrollment {
   createdAt   DateTime  @default(now())
   completedAt DateTime?
   certCode    String?   @unique
+  paidAt      DateTime?
 
   @@id([userId, courseId])
 }
@@ -291,6 +295,9 @@ model Payment {
   id        Int      @id @default(autoincrement())
   userId    Int
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String   @default("activation") // activation | course
+  courseId  Int?
+  course    Course?  @relation(fields: [courseId], references: [id], onDelete: Restrict)
   reference String   @unique
   amount    Int
   currency  String

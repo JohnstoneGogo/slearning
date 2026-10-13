@@ -14,7 +14,7 @@ export const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Somethi
 
 export interface Me {
   id: number; member_id: string; username: string; email: string; full_name: string; country: string; phone: string; status: string; eligible: boolean; email_verified: boolean;
-  role: string; deadline_at: string; currency: string; referrer_id: number | null;
+  role: string; deadline_at: string; currency: string; referrer_id: number | null; avatar_url?: string | null;
   balances: { total_earned: number; pending: number; available: number; held: number; withdrawn: number };
 }
 export interface Achievement {
@@ -26,8 +26,16 @@ export interface LearningStats {
   quiz_attempts: number; quiz_passed: number; average_score: number;
   achievements: Achievement[];
 }
+export interface UpcomingLearning {
+  course_id: number;
+  title: string;
+  remaining: number;
+  total: number;
+  next_lesson: { id: number; title: string; kind: string; minutes: number } | null;
+  quiz: { id: number; questions: number; pass_percent: number; passed: boolean } | null;
+}
 export interface CourseItem {
   id: number; title: string; author: string | null; description?: string | null; cover_url: string | null; minutes: number; level: string; rating: number; rating_count: number;
   reward_eligible: boolean; enrolments?: number; category?: string | null; lessons?: number; percent?: number; completed_at?: string | null; cert_code?: string | null;
-  has_free_preview?: boolean; quiz_count?: number;
+  has_free_preview?: boolean; quiz_count?: number; priceGhs?: number | null; priceNgn?: number | null;
 }

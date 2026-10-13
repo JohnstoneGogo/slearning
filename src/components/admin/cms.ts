@@ -14,7 +14,7 @@ const NAV = [['overview', 'Overview'], ['courses', 'Courses'], ['categories', 'C
 
 // ---------- generic CRUD ----------
 const RES: Record<string, any> = {
-  courses: { cols: ['id', 'title', 'level', 'rating', 'enrolments', 'published'], fields: () => [['title', 'Title', 'text', 1], ['author', 'Author'], ['category_id', 'Category', 'select', 0, cats.map((c: any) => [c.id, c.name])], ['level', 'Level', 'select', 0, ['Beginner', 'Intermediate', 'Advanced'].map((x: any) => [x, x])], ['description', 'Description', 'textarea'], ['cover_url', 'Cover image', 'image'], ['minutes', 'Total minutes', 'number'], ['language', 'Language'], ['learn_points', "What you'll learn (one per line)", 'lines'], ['skills', 'Skills (comma separated)'], ['reward_eligible', 'Reward eligible', 'check'], ['published', 'Published', 'check']], lessons: 1, defaults: { published: 1, minutes: 60, level: 'Beginner', language: 'English', learn_points: [] } },
+  courses: { cols: ['id', 'title', 'level', 'priceGhs', 'priceNgn', 'rating', 'enrolments', 'published'], fields: () => [['title', 'Title', 'text', 1], ['author', 'Author'], ['category_id', 'Category', 'select', 0, cats.map((c: any) => [c.id, c.name])], ['level', 'Level', 'select', 0, ['Beginner', 'Intermediate', 'Advanced'].map((x: any) => [x, x])], ['description', 'Description', 'textarea'], ['cover_url', 'Cover image', 'image'], ['minutes', 'Total minutes', 'number'], ['language', 'Language'], ['price_ghs', 'Price in Ghana (GHS)', 'm?'], ['price_ngn', 'Price in Nigeria (NGN)', 'm?'], ['learn_points', "What you'll learn (one per line)", 'lines'], ['skills', 'Skills (comma separated)'], ['reward_eligible', 'Reward eligible', 'check'], ['published', 'Published', 'check']], lessons: 1, defaults: { published: 1, minutes: 60, level: 'Beginner', language: 'English', learn_points: [], price_ghs: '', price_ngn: '' } },
   categories: { cols: ['id', 'name', 'sort'], fields: () => [['name', 'Name', 'text', 1], ['description', 'Description', 'textarea'], ['thumb_url', 'Image', 'image'], ['sort', 'Sort order', 'number']], defaults: { sort: 0 } },
   facts: { cols: ['id', 'title', 'active'], fields: () => [['title', 'Title', 'text', 1], ['body', 'Text', 'textarea'], ['image_url', 'Image', 'image'], ['link_url', 'Link (optional)'], ['active', 'Show on site', 'check']], defaults: { active: 1 } },
   lessons: { cols: ['sort', 'title', 'kind', 'preview'], fields: () => [['title', 'Title', 'text', 1], ['kind', 'Type', 'select', 0, [['text', 'Reading'], ['video', 'Video'], ['pdf', 'PDF eBook']]], ['content', 'Text content (for reading lessons)', 'textarea'], ['url', 'Video URL / PDF file', 'file'], ['minutes', 'Minutes', 'number'], ['sort', 'Order', 'number'], ['preview', 'Free preview', 'check']], defaults: { kind: 'text', minutes: 10, sort: 1, preview: 0 } }
@@ -24,12 +24,19 @@ function input([n, label, type = 'text', req, opts]: any[], v: any) {
   if (type === 'textarea') return `${L}<textarea id="${id}" name="${n}" rows="5">${esc(v)}</textarea></label>`;
   if (type === 'lines') return `${L}<textarea id="${id}" name="${n}" data-t="lines" rows="4">${esc((Array.isArray(v) ? v : JSON.parse(v || '[]')).join('\n'))}</textarea></label>`;
   if (type === 'select') return `${L}<select id="${id}" name="${n}">${opts.map((o: any) => `<option value="${esc(o[0])}" ${o[0] == v ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label>`;
+  if (type === 'm?') return `${L}<input id="${id}" name="${n}" type="number" min="0" max="20000000" step="0.01" inputmode="decimal" data-nullable-money value="${esc(v)}" placeholder="Leave blank until pricing is set"></label>`;
   if (type === 'check') return `<label class="row" style="font-weight:500"><input type="checkbox" id="${id}" name="${n}" ${v ? 'checked' : ''} style="width:auto;min-height:0"> ${label}</label>`;
-  if (type === 'image' || type === 'file') return `${L}<input id="${id}" name="${n}" value="${esc(v)}" placeholder="${type === 'image' ? 'Paste a URL or upload' : 'Video URL, or upload a PDF'}"><input type="file" data-up="${n}" data-kind="${type}" accept="${type === 'image' ? 'image/*' : 'application/pdf'}" style="margin-top:6px"><small class="muted">${v && type === 'image' ? `<img src="${esc(v)}" alt="" style="max-height:70px;margin-top:6px;border-radius:8px">` : ''}</small></label>`;
+  if (type === 'image' || type === 'file') {
+    const hasPreview = !!(v && type === 'image');
+    const previewMarkup = hasPreview
+      ? `<div class="admin-upload-preview"><img src="${esc(v)}" alt="" /></div>`
+      : `<div class="admin-upload-preview empty"><span>${type === 'image' ? 'Thumbnail preview' : 'Upload file'}</span></div>`;
+    return `${L}<div class="admin-upload-box">${previewMarkup}<input id="${id}" name="${n}" value="${esc(v)}" placeholder="${type === 'image' ? 'Paste a URL or upload' : 'Video URL, or upload a PDF'}"><input type="file" data-up="${n}" data-kind="${type}" accept="${type === 'image' ? 'image/*' : 'application/pdf'}"></div></label>`;
+  }
   return `${L}<input id="${id}" name="${n}" type="${type}" value="${esc(v)}" ${req ? 'required' : ''}></label>`;
 }
 function collect(f: any) {
-  const o: Row = {}; $$('input,textarea,select', f).forEach((el: any) => { if (!el.name) return; o[el.name] = el.type === 'checkbox' ? +el.checked : el.dataset.t === 'lines' ? el.value.split('\n').map((s: any) => s.trim()).filter(Boolean) : el.type === 'number' ? +el.value : el.value; });
+  const o: Row = {}; $$('input,textarea,select', f).forEach((el: any) => { if (!el.name) return; o[el.name] = el.type === 'checkbox' ? +el.checked : el.dataset.t === 'lines' ? el.value.split('\n').map((s: any) => s.trim()).filter(Boolean) : el.dataset.nullableMoney !== undefined && el.value.trim() === '' ? null : el.type === 'number' ? +el.value : el.value; });
   return o;
 }
 function wireUploads(f: any) {
@@ -41,10 +48,11 @@ function wireUploads(f: any) {
 async function crud(name: string, filter?: string) {
   const R = RES[name], q = filter ? `?course_id=${filter}` : '', rows = await api(`/admin/content/${name}${q}`);
   const title = ({ courses: 'Courses', categories: 'Categories', facts: 'Did you know', lessons: 'Lessons' } as Record<string, string>)[name];
-  main(`<div class="sp"><h1>${title}</h1><button class="btn primary" id="add">Add new</button></div><div class="tbl card"><table><thead><tr>${R.cols.map((c: any) => `<th>${c}</th>`).join('')}<th></th></tr></thead><tbody>
-  ${rows.map((r: any) => `<tr>${R.cols.map((c: any) => `<td>${esc(c === 'published' || c === 'active' || c === 'preview' ? (r[c] ? 'yes' : 'no') : r[c])}</td>`).join('')}<td style="white-space:nowrap"><button class="btn sm" data-e="${r.id}">Edit</button>${R.lessons ? `<button class="btn sm" data-l="${r.id}">Lessons</button>` : ''}<button class="btn sm" data-d="${r.id}">Delete</button></td></tr>`).join('') || `<tr><td colspan="9" class="muted">Nothing here yet.</td></tr>`}</tbody></table></div><div id="ed"></div>`);
+  main(`<div class="sp"><h1>${title}</h1><button class="btn primary" id="add">Add new</button></div><div class="tbl card"><table><thead><tr>${R.cols.map((c: any) => `<th>${c === 'priceGhs' ? 'Price GHS' : c === 'priceNgn' ? 'Price NGN' : esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
+  ${rows.map((r: any) => `<tr>${R.cols.map((c: any) => `<td>${c === 'priceGhs' ? (r.price_ghs == null ? '—' : money(r.price_ghs, 'GHS')) : c === 'priceNgn' ? (r.price_ngn == null ? '—' : money(r.price_ngn, 'NGN')) : esc(c === 'published' || c === 'active' || c === 'preview' ? (r[c] ? 'yes' : 'no') : r[c])}</td>`).join('')}<td style="white-space:nowrap"><button class="btn sm" data-e="${r.id}">Edit</button>${R.lessons ? `<button class="btn sm" data-l="${r.id}">Lessons</button>` : ''}<button class="btn sm" data-d="${r.id}">Delete</button></td></tr>`).join('') || `<tr><td colspan="9" class="muted">Nothing here yet.</td></tr>`}</tbody></table></div><div id="ed"></div>`);
   const edit = (row: any) => {
     const v: Row = { ...R.defaults, ...(row || {}) }; if (filter) v.course_id = filter;
+    if (name === 'courses' && row) { v.price_ghs = row.price_ghs == null ? '' : row.price_ghs / 100; v.price_ngn = row.price_ngn == null ? '' : row.price_ngn / 100; }
     $('#ed').innerHTML = `<form id="ef" class="card mt form2"><h2 class="full">${row ? 'Edit' : 'New'} ${title.toLowerCase().replace(/s$/, '')}</h2>${R.fields().map((f: any) => input(f, v[f[0]])).join('')}<p class="err full"></p><div class="row full"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="cx">Cancel</button></div></form>`;
     wireUploads($('#ef')); $('#cx').onclick = () => $('#ed').innerHTML = ''; $('#ef').scrollIntoView({ behavior: 'smooth' });
     $('#ef').onsubmit = async (e: any) => { e.preventDefault(); const body = collect(e.target); if (filter) body.course_id = +filter; try { await api(`/admin/content/${name}${row ? '/' + row.id : ''}`, { method: row ? 'PUT' : 'POST', body }); toast('Saved.'); crud(name, filter); } catch (x: any) { $('.err', e.target).textContent = x.message; } };
@@ -61,7 +69,7 @@ const SCREENS: Record<string, any> = {
   async overview() {
     const s = await api('/admin/stats');
     main(`<h1>Overview</h1><div class="stats">${[['Members', s.users], ['Activated', s.activated], ['Sign-ups (7 days)', s.signups7d], ['Courses', s.courses]].map((x: any) => `<div class="card stat"><span>${x[0]}</span><b>${x[1]}</b></div>`).join('')}</div>
-    <div class="grid mt"><div class="card"><h3>Activation revenue</h3>${s.revenue.map((r: any) => `<p><b>${money(r.total, r.currency)}</b> from ${r.n} payments</p>`).join('') || '<p class="muted">No payments yet.</p>'}</div>
+    <div class="grid mt"><div class="card"><h3>Payment revenue</h3>${s.revenue.map((r: any) => `<p><b>${money(r.total, r.currency)}</b> from ${r.n} payments</p>`).join('') || '<p class="muted">No payments yet.</p>'}</div>
     <div class="card"><h3>Open withdrawals</h3>${s.pending_withdrawals.map((r: any) => `<p><b>${money(r.total, r.currency)}</b> (${r.n})</p>`).join('') || '<p class="muted">None.</p>'}${s.needs_review ? `<p class="bad"><b>${s.needs_review}</b> need your review. <a href="#/withdrawals">Open</a></p>` : ''}</div>
     <div class="card"><h3>System</h3><p>Payment provider: <span class="pill">${esc(s.provider)}</span></p>${s.provider === 'mock' ? '<p class="bad">Mock mode: no real money moves. Set PAYSTACK_SECRET_KEY to go live.</p>' : ''}${s.mismatches ? `<p class="bad">${s.mismatches} payments have an amount mismatch.</p>` : ''}</div></div>`);
   },
@@ -88,7 +96,7 @@ const SCREENS: Record<string, any> = {
   },
   async payments() {
     const rows = await api('/admin/payments');
-    main(`<h1>Payments</h1>${table(['Date', 'User', 'Reference', 'Amount', 'Provider', 'Status', ''], rows.map((p: any) => `<tr><td>${esc(p.created_at)}</td><td>${esc(p.username)}</td><td><small>${esc(p.reference)}</small></td><td>${money(p.amount, p.currency)}</td><td>${p.provider}</td><td class="${p.status === 'success' ? 'ok' : p.status === 'mismatch' ? 'bad' : ''}">${p.status}</td><td>${p.status === 'pending' || p.status === 'failed' ? `<button class="btn sm" data-v="${esc(p.reference)}">Re-check</button>` : ''}</td></tr>`))}`);
+    main(`<h1>Payments</h1>${table(['Date', 'Type', 'Course', 'User', 'Reference', 'Amount', 'Provider', 'Status', ''], rows.map((p: any) => `<tr><td>${esc(p.created_at)}</td><td>${p.kind === 'course' ? 'Course' : 'Activation'}</td><td>${esc(p.course_title || '—')}</td><td>${esc(p.username)}</td><td><small>${esc(p.reference)}</small></td><td>${money(p.amount, p.currency)}</td><td>${esc(p.provider)}</td><td class="${p.status === 'success' ? 'ok' : p.status === 'mismatch' ? 'bad' : ''}">${esc(p.status)}</td><td>${p.status === 'pending' || p.status === 'failed' ? `<button class="btn sm" data-v="${esc(p.reference)}">Re-check</button>` : ''}</td></tr>`))}`);
     $$('[data-v]').forEach((b: any) => b.onclick = async () => { try { const r = await api(`/admin/payments/${b.dataset.v}/verify`, { body: {} }); toast('Status: ' + r.status); SCREENS.payments(); } catch (x: any) { toast(x.message); } });
   },
   async withdrawals() {

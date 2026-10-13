@@ -10,6 +10,38 @@ const Icon = ({ d }: { d: string }) => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
 );
 
+function FeaturedCourse({ course }: { course: { id: number; title: string; category: string | null; coverUrl: string | null; level: string; minutes: number } | undefined }) {
+  if (!course) return (
+    <div className="lp-hero-learning" aria-label="S Learning course experience">
+      <div className="lp-hero-learning-head"><span className="lp-hero-learning-mark"><Icon d="M4 5.5c3.5-1.1 6.8-.5 10 1.5v14c-3.2-2-6.5-2.6-10-1.5v-14Zm16 0c-3.5-1.1-6.8-.5-10 1.5v14c3.2-2 6.5-2.6 10-1.5v-14Z" /></span><b>S Learning</b><span>Learning platform</span></div>
+      <div className="lp-hero-learning-body">
+        <span className="lp-hero-learning-kicker">YOUR LEARNING JOURNEY</span>
+        <h2>Learn at your pace.<br />Build skills that last.</h2>
+        <div className="lp-hero-learning-steps">
+          <div><b>01</b><span>Choose a course</span></div>
+          <div><b>02</b><span>Learn step by step</span></div>
+          <div><b>03</b><span>Earn a certificate</span></div>
+        </div>
+      </div>
+    </div>
+  );
+  return (
+    <Link className="lp-hero-featured" href={`/courses/${course.id}`}>
+      <Img src={course.coverUrl} alt={`Course cover: ${course.title}`} cls="lp-hero-featured-image" eager />
+      <div className="lp-hero-featured-body">
+        <span className="lp-hero-learning-kicker">POPULAR COURSE</span>
+        <h2>{course.title}</h2>
+        <div className="lp-hero-featured-meta">
+          {course.category && <span>{course.category}</span>}
+          <span>{course.level}</span>
+          <span>{course.minutes} min</span>
+        </div>
+        <span className="lp-hero-featured-link">Explore course <span aria-hidden="true">→</span></span>
+      </div>
+    </Link>
+  );
+}
+
 const trustBadges = ['Secure payments', 'Mobile money', 'Cards', 'Bank transfer', 'Ghana', 'Nigeria'];
 
 /** Trust strip badges, mirrored below as a reflection. */
@@ -51,7 +83,10 @@ export default async function Landing() {
               </div>
             </div>
             <div className="lp-hero-vid fade-up in" style={{ transitionDelay: '120ms' }}>
-              <VideoHero url={s.video_url} poster={s.video_poster} />
+              {s.video_url
+                ? <VideoHero url={s.video_url} poster={s.video_poster} />
+                : <FeaturedCourse course={pop.items[0] ? { ...pop.items[0], coverUrl: s.video_poster || pop.items[0].coverUrl } : undefined} />
+              }
             </div>
           </div>
         </div>
@@ -61,10 +96,28 @@ export default async function Landing() {
       <section className="lp-stats-section">
         <div className="wrap">
           <div className="lp-stats">
-            {[[s.stat_learners, 'Learners'], [s.stat_courses, 'Courses & eBooks'], ['2', 'Countries'], ['Available', 'Certificate on completion']].map(([v, l], i) => (
+            {[[s.stat_learners, 'Learners'], [s.stat_courses, 'Courses & eBooks'], [s.stat_countries || '2', 'Countries'], ['Available', 'Certificate on completion']].map(([v, l], i) => (
               <div key={l} className="lp-stat-item fade-up in" style={{ transitionDelay: `${i * 80}ms` }}>
                 <b>{v}</b><span>{l}</span>
               </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── POPULAR COURSES ── */}
+      <section className="lp-section lp-popular-section">
+        <div className="wrap">
+          <div className="lp-section-head">
+            <Animate>
+              <div className="lp-section-label">Trending</div>
+              <h2 className="lp-section-title">Popular right now</h2>
+            </Animate>
+            <Animate><Link href="/courses?sort=popular" className="btn">See more →</Link></Animate>
+          </div>
+          <div className="grid">
+            {pop.items.map((c, i) => (
+              <Animate key={c.id} delay={i * 70}><CourseCard c={c} /></Animate>
             ))}
           </div>
         </div>
@@ -160,24 +213,6 @@ export default async function Landing() {
                   </div>
                 </Link>
               </Animate>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── POPULAR COURSES ── */}
-      <section className="lp-section">
-        <div className="wrap">
-          <div className="lp-section-head">
-            <Animate>
-              <div className="lp-section-label">Trending</div>
-              <h2 className="lp-section-title">Popular right now</h2>
-            </Animate>
-            <Animate><Link href="/courses?sort=popular" className="btn">See more →</Link></Animate>
-          </div>
-          <div className="grid">
-            {pop.items.map((c, i) => (
-              <Animate key={c.id} delay={i * 70}><CourseCard c={c as any} /></Animate>
             ))}
           </div>
         </div>

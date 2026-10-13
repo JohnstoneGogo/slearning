@@ -13,10 +13,10 @@ import { UPLOADS } from './app';
 
 const touch = () => { clearCache(); try { revalidatePath('/', 'layout'); } catch { /* outside a request */ } };
 
-type F = 's' | 's?' | 'i' | 'b' | 'j' | 'n';
+type F = 's' | 's?' | 'i' | 'b' | 'j' | 'n' | 'm?';
 const SPEC: Record<string, { model: string; f: Record<string, F> }> = {
   categories: { model: 'category', f: { name: 's', description: 's?', thumb_url: 's?', sort: 'i' } },
-  courses: { model: 'course', f: { title: 's', author: 's?', category_id: 'n', level: 's', description: 's?', cover_url: 's?', minutes: 'i', language: 's', learn_points: 'j', skills: 's', reward_eligible: 'b', published: 'b' } },
+  courses: { model: 'course', f: { title: 's', author: 's?', category_id: 'n', level: 's', description: 's?', cover_url: 's?', minutes: 'i', language: 's', learn_points: 'j', skills: 's', reward_eligible: 'b', price_ghs: 'm?', price_ngn: 'm?', published: 'b' } },
   facts: { model: 'fact', f: { title: 's', body: 's', image_url: 's?', link_url: 's?', active: 'b' } },
   lessons: { model: 'lesson', f: { course_id: 'i', title: 's', kind: 's', content: 's?', url: 's?', minutes: 'i', preview: 'b', sort: 'i' } },
   resources: { model: 'lessonResource', f: { lesson_id: 'i', title: 's', url: 's', kind: 's', size: 'n', sort: 'i' } },
@@ -27,7 +27,9 @@ function shape(table: string, body: Record<string, unknown>) {
   for (const [k, t] of Object.entries(spec.f)) {
     if (!(k in body)) continue; const v = body[k];
     out[camelKey(k)] = t === 's' ? String(v ?? '') : t === 's?' ? (v == null || v === '' ? null : String(v)) : t === 'i' ? Math.round(Number(v) || 0)
-      : t === 'b' ? v === true || v === 1 || v === '1' : t === 'j' ? (Array.isArray(v) ? v : []) : v == null || v === '' || v === 0 ? null : Number(v);
+      : t === 'b' ? v === true || v === 1 || v === '1' : t === 'j' ? (Array.isArray(v) ? v : [])
+        : t === 'm?' ? (v == null || v === '' ? null : (() => { const amount = Number(v); if (!Number.isFinite(amount) || amount < 0 || amount > 20_000_000) fail(400, `${k} must be between 0 and 20,000,000.`); return Math.round(amount * 100); })())
+          : v == null || v === '' || v === 0 ? null : Number(v);
   }
   return { model: (prisma as any)[spec.model], data: out };
 }
@@ -55,7 +57,7 @@ admin('PATCH', '/admin/users/:id', async c => {
   await audit(c.user.id, 'suspend', { id: u!.id, v: !!b.suspended });
   return { ok: true };
 });
-admin('GET', '/admin/payments', async () => (await prisma.payment.findMany({ orderBy: { id: 'desc' }, take: 200, include: { user: { select: { username: true } } } })).map(({ user, ...p }) => ({ ...p, username: user.username })));
+admin('GET', '/admin/payments', async () => (await prisma.payment.findMany({ orderBy: { id: 'desc' }, take: 200, include: { user: { select: { username: true } }, course: { select: { title: true } } } })).map(({ user, course, ...p }) => ({ ...p, username: user.username, courseTitle: course?.title ?? null })));
 admin('POST', '/admin/payments/:ref/verify', async c => {
   const P = provider(); if (!P.live) fail(400, 'No live provider configured.');
   const v = await P.verify(c.params.ref); return confirmPayment(c.params.ref, v.amount, v.currency, v.status);

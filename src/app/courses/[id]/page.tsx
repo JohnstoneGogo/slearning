@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { getCourse, getReviews } from '@/server/data';
 import { Img, Stars } from '@/components/bits';
 import CourseActions from '@/components/CourseActions';
+import { money } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 const load = async (id: string) => { try { return await getCourse(+id); } catch { return null; } };
@@ -30,8 +31,8 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
                 {isFree
                   ? <span className="course-badge free">Free</span>
                   : <span className="course-badge paid">Paid</span>}
-                {course.rewardEligible && <span className="course-badge reward">💰 Reward eligible</span>}
-                <span className="course-badge cert">🎓 Certificate</span>
+                {course.rewardEligible && <span className="course-badge reward">Reward eligible</span>}
+                <span className="course-badge cert">Certificate</span>
               </div>
               <h1 style={{ fontSize: 'clamp(1.7rem,4.5vw,2.6rem)', marginBottom: '.5rem' }}>{course.title}</h1>
               <p className="sub" style={{ fontSize: '1.05rem', marginBottom: '1rem' }}>{course.description}</p>
@@ -39,15 +40,21 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
                 {course.ratingCount > 0 && (
                   <span><Stars r={course.rating} /> <b>{course.rating.toFixed(1)}</b> <span className="sub">({course.ratingCount} reviews)</span></span>
                 )}
-                <span className="sub">👥 {course.enrolments} learners</span>
+                <span className="sub">{course.enrolments} learners</span>
                 <span className="sub">By <b style={{ color: '#fff' }}>{course.author || 'Unknown'}</b></span>
               </div>
               <div className="row" style={{ gap: '8px', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
                 <span className="tag">{course.level}</span>
-                <span className="tag">⏱ {course.minutes} min</span>
-                <span className="tag">📖 {course.lessons.length} lessons</span>
+                <span className="tag">{course.minutes} min</span>
+                <span className="tag">{course.lessons.length} lessons</span>
                 <span className="tag">{course.language}</span>
               </div>
+              <p className="course-price">
+                {[
+                  course.priceGhs != null ? money(course.priceGhs, 'GHS') : null,
+                  course.priceNgn != null ? money(course.priceNgn, 'NGN') : null,
+                ].filter(Boolean).join(' · ') || 'Course price pending'}
+              </p>
               <CourseActions id={course.id} rewardEligible={course.rewardEligible} mode="hero" />
             </div>
             <div><Img src={course.coverUrl} alt={`cover of ${course.title}`} cls="cover" eager full /></div>
@@ -78,7 +85,7 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
 
               {/* Certificate requirements */}
               <div className="card course-cert-req">
-                <div className="course-cert-icon">🎓</div>
+                <div className="course-cert-icon" aria-hidden="true">CERT</div>
                 <div>
                   <h3 style={{ margin: '0 0 6px' }}>Certificate of completion</h3>
                   <p className="muted" style={{ margin: 0, fontSize: '.95rem' }}>
@@ -98,7 +105,7 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
                     <span className="course-lesson-meta">
                       {l.preview && <span className="badge" style={{ marginRight: 6 }}>Free preview</span>}
                       <span className="muted" style={{ fontSize: '.85rem' }}>
-                        {({ text: '📄 Reading', video: '▶ Video', pdf: '📕 PDF' } as Record<string, string>)[l.kind] || 'Lesson'} · {l.minutes} min
+                      {({ text: 'Reading', video: 'Video', pdf: 'PDF' } as Record<string, string>)[l.kind] || 'Lesson'} · {l.minutes} min
                       </span>
                     </span>
                   </summary>

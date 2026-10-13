@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { imgSrc } from '@/lib/ui';
-import type { CourseItem } from '@/lib/api';
+import { money, type CourseItem } from '@/lib/api';
 
 export const Stars = ({ r }: { r: number }) => <span className="stars" aria-label={`${(+r || 0).toFixed(1)} out of 5`}>{'★'.repeat(Math.round(r || 0))}{'☆'.repeat(5 - Math.round(r || 0))}</span>;
 
@@ -20,20 +20,47 @@ export function Img({ src, alt, cls = '', eager = false, full = false }: { src?:
   return <img className={`thumb ${cls}`} src={s.src} srcSet={s.srcSet} sizes={full ? '(max-width:900px) 100vw, 600px' : '(max-width:600px) 100vw, 360px'} alt={alt} width={480} height={300} loading={eager ? 'eager' : 'lazy'} fetchPriority={eager ? 'high' : undefined} decoding="async" />;
 }
 
-export function CourseCard({ c }: { c: CourseItem }) {
+export type CourseCardSource = Pick<CourseItem, 'id' | 'title' | 'author' | 'minutes' | 'level' | 'rating'> & {
+  cover_url?: string | null;
+  coverUrl?: string | null;
+  rating_count?: number;
+  ratingCount?: number;
+  reward_eligible?: boolean;
+  rewardEligible?: boolean;
+  has_free_preview?: boolean;
+  hasFreePreview?: boolean;
+  quiz_count?: number;
+  quizCount?: number;
+  percent?: number;
+  priceGhs?: number | null;
+  priceNgn?: number | null;
+};
+
+export function CourseCard({ c }: { c: CourseCardSource }) {
+  const cover = c.cover_url ?? c.coverUrl ?? null;
+  const ratingCount = c.rating_count ?? c.ratingCount ?? 0;
+  const rewardEligible = c.reward_eligible ?? c.rewardEligible ?? false;
+  const freePreview = c.has_free_preview ?? c.hasFreePreview ?? false;
+  const quizCount = c.quiz_count ?? c.quizCount ?? 0;
   return (
     <Link className="card flat" href={`/courses/${c.id}`} style={{ textDecoration: 'none' }}>
-      <Img src={c.cover_url} alt={`cover of ${c.title}`} />
+      <Img src={cover} alt={`cover of ${c.title}`} />
       <div className="body">
         <h3>{c.title}</h3><p className="muted" style={{ margin: '0 0 6px' }}>{c.author}</p>
-        {c.rating_count > 0 && <><Stars r={c.rating} /> <small className="muted">({c.rating_count})</small><br /></>}
+        {ratingCount > 0 && <><Stars r={c.rating} /> <small className="muted">({ratingCount})</small><br /></>}
         <div className="card-tags">
-          {c.has_free_preview ? <span className="tag ok">Free preview</span> : <span className="tag paid-tag">Paid</span>}
+          {freePreview ? <span className="tag ok">Free preview</span> : <span className="tag">No preview</span>}
           <span className="tag cert-tag">Certificate</span>
           <span className="tag">{c.level}</span><span className="tag">{c.minutes} min</span>
-          {!!c.quiz_count && <span className="tag">{c.quiz_count} quiz{c.quiz_count === 1 ? '' : 'zes'}</span>}
-          {c.reward_eligible && <span className="tag ok">Reward</span>}
+          {!!quizCount && <span className="tag">{quizCount} quiz{quizCount === 1 ? '' : 'zes'}</span>}
+          {rewardEligible && <span className="tag ok">Reward</span>}
         </div>
+        <p className="course-price">
+          {c.priceGhs == null && c.priceNgn == null ? 'Price pending' : [
+            c.priceGhs != null ? money(c.priceGhs, 'GHS') : null,
+            c.priceNgn != null ? money(c.priceNgn, 'NGN') : null,
+          ].filter(Boolean).join(' · ')}
+        </p>
         {c.percent != null && <><div className="bar-p" style={{ marginTop: 8 }}><i style={{ width: `${c.percent}%` }} /></div><small className="muted">{c.percent}% complete</small></>}
       </div>
     </Link>

@@ -34,6 +34,7 @@ Course catalogue: search by keyword, topic, skill level, access, duration, and l
 2. For payouts: fund your Paystack balance and turn **off** "Confirm transfers before sending" in Paystack settings (otherwise transfers wait for an OTP).
 3. Set `APP_URL` to your public https address.
 Activation: checkout (mobile money/card/bank) -> webhook **and** server-side verify -> amount and currency must match -> account can be activated. Payouts use stable references (no double pay), webhooks + a reconciliation worker finalise them, and withdrawals above the review threshold wait for CMS approval. With no key the app runs in **mock mode** (no money moves).
+Course access: set each course's Ghana (GHS) and Nigeria (NGN) price in **CMS > Courses**. Leave a price blank until configured; enter `0` for a free course. Prices are stored in minor units. A successful, server-verified purchase unlocks only that course, including for an unactivated learner; activated accounts retain platform-wide course access. The course page and catalogue show both configured prices.
 Not testable from my environment: live Paystack calls. Test in Paystack test mode first and check the current API docs.
 **Worker:** a long-running server (`next start`/Docker) reconciles payouts automatically. On serverless hosts call `GET /api/v1/cron/reconcile` every minute with `Authorization: Bearer $CRON_SECRET`.
 

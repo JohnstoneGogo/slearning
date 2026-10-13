@@ -59,7 +59,7 @@ export default async function Courses({ searchParams }: { searchParams: Promise<
 
         {/* Grid */}
         {res.items.length
-          ? <div className="grid">{res.items.map(c => <CourseCard key={c.id} c={c as any} />)}</div>
+          ? <div className="grid">{res.items.map(c => <CourseCard key={c.id} c={c} />)}</div>
           : (
             <div className="card courses-empty">
               <div className="courses-empty-icon">📚</div>

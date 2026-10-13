@@ -4,7 +4,7 @@ import Header from '@/components/Header';
 import HeaderScroll from '@/components/HeaderScroll';
 import Footer from '@/components/Footer';
 import PageLoader from '@/components/PageLoader';
-import { getConfig } from '@/server/data';
+import { getCategories, getConfig } from '@/server/data';
 import './globals.css';
 
 export const dynamic = 'force-dynamic'; // data is cached in memory for 60s and cleared on every CMS edit
@@ -17,7 +17,8 @@ export async function generateMetadata(): Promise<Metadata> {
 export const viewport: Viewport = { themeColor: '#10233f', width: 'device-width', initialScale: 1, viewportFit: 'cover' };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const s = (await getConfig()).site;
+  const [config, categories] = await Promise.all([getConfig(), getCategories()]);
+  const s = config.site;
   return (
     <html lang="en">
       <head>
@@ -28,7 +29,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         <a className="skip" href="#main">Skip to content</a>
         <Providers>
-          <Header name={s.name} /><HeaderScroll /><PageLoader />
+          <Header name={s.name} categories={categories.map(({ id, name }) => ({ id, name }))} /><HeaderScroll /><PageLoader />
           <main id="main" tabIndex={-1}>{children}</main>
           <Footer />
         </Providers>

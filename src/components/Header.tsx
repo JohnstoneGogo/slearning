@@ -7,8 +7,38 @@ import { useAuth } from './Providers';
 import { LogoMark } from './Logo';
 
 interface Note { id: number; title: string; body: string; link: string | null; read: boolean }
+interface NavCategory { id: number; name: string }
 
-export default function Header({ name }: { name: string }) {
+function CoursesDropdown({ categories, path, desktop = false }: { categories: NavCategory[]; path: string; desktop?: boolean }) {
+  const setOpenOnInteraction = (isOpen: boolean) => (
+    event: React.MouseEvent<HTMLDetailsElement> | React.FocusEvent<HTMLDetailsElement>
+  ) => {
+    if (desktop && window.matchMedia('(min-width: 821px)').matches) {
+      event.currentTarget.open = isOpen;
+    }
+  };
+  const active = path.startsWith('/courses');
+
+  return (
+    <details
+      onMouseEnter={desktop ? setOpenOnInteraction(true) : undefined}
+      onMouseLeave={desktop ? setOpenOnInteraction(false) : undefined}
+      onFocus={desktop ? setOpenOnInteraction(true) : undefined}
+      onBlur={desktop ? setOpenOnInteraction(false) : undefined}
+      className={`nav-help nav-courses${active ? ' on' : ''}`}
+    >
+      <summary aria-haspopup="true">Courses</summary>
+      <div className="nav-dropdown-menu" aria-label="Course categories">
+        <Link href="/courses">All courses</Link>
+        {categories.map(category => (
+          <Link key={category.id} href={`/courses?cat=${category.id}`}>{category.name}</Link>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+export default function Header({ name, categories }: { name: string; categories: NavCategory[] }) {
   const { me, logout } = useAuth();
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -83,8 +113,12 @@ export default function Header({ name }: { name: string }) {
       setNotes(n => n && n.map(x => ({ ...x, read: true })));
     }
   };
-  const setHelpOnHover = (isOpen: boolean) => (event: React.MouseEvent<HTMLDetailsElement>) => {
-    if (window.matchMedia('(min-width: 821px)').matches) event.currentTarget.open = isOpen;
+  const setHelpOnHover = (isOpen: boolean) => (
+    event: React.MouseEvent<HTMLDetailsElement> | React.FocusEvent<HTMLDetailsElement>
+  ) => {
+    if (window.matchMedia('(min-width: 821px)').matches) {
+      event.currentTarget.open = isOpen;
+    }
   };
 
   return (
@@ -100,12 +134,18 @@ export default function Header({ name }: { name: string }) {
             {me ? (
               <>
                 <Link className={on('/dashboard')} href="/dashboard">Dashboard</Link>
-                <Link className={on('/courses')} href="/courses">Courses</Link>
+                <CoursesDropdown categories={categories} path={path} desktop />
                 <Link className={on('/earnings')} href="/earnings">Earnings</Link>
                 <Link className={on('/withdraw')} href="/withdraw">Withdraw</Link>
                 <Link className={on('/profile')} href="/profile">Profile</Link>
                 {me.role === 'admin' && <Link href="/admin" className={on('/admin')}>Admin</Link>}
-                <details onMouseEnter={setHelpOnHover(true)} onMouseLeave={setHelpOnHover(false)} className={`nav-help${path === '/faq' || path === '/contact' || path.startsWith('/p/help') ? ' on' : ''}`}>
+                <details
+                  onMouseEnter={setHelpOnHover(true)}
+                  onMouseLeave={setHelpOnHover(false)}
+                  onFocus={setHelpOnHover(true)}
+                  onBlur={setHelpOnHover(false)}
+                  className={`nav-help${path === '/faq' || path === '/contact' || path.startsWith('/p/help') ? ' on' : ''}`}
+                >
                   <summary aria-haspopup="true">Help</summary>
                   <div className="nav-dropdown-menu">
                     <Link href="/faq">Frequently asked questions</Link>
@@ -124,11 +164,17 @@ export default function Header({ name }: { name: string }) {
             ) : (
               <>
                 <Link href="/">Home</Link>
-                <Link className={on('/courses')} href="/courses">Courses</Link>
+                <CoursesDropdown categories={categories} path={path} desktop />
                 <Link className={on('/about')} href="/about">About</Link>
                 <a href="/#how">How it works</a>
                 <a href="/#why">Why us</a>
-                <details onMouseEnter={setHelpOnHover(true)} onMouseLeave={setHelpOnHover(false)} className={`nav-help${path === '/faq' || path === '/contact' || path.startsWith('/p/help') ? ' on' : ''}`}>
+                <details
+                  onMouseEnter={setHelpOnHover(true)}
+                  onMouseLeave={setHelpOnHover(false)}
+                  onFocus={setHelpOnHover(true)}
+                  onBlur={setHelpOnHover(false)}
+                  className={`nav-help${path === '/faq' || path === '/contact' || path.startsWith('/p/help') ? ' on' : ''}`}
+                >
                   <summary aria-haspopup="true">Help</summary>
                   <div className="nav-dropdown-menu">
                     <Link href="/faq">Frequently asked questions</Link>
@@ -199,7 +245,7 @@ export default function Header({ name }: { name: string }) {
           {me ? (
             <>
               <Link className={on('/dashboard')} href="/dashboard">Dashboard</Link>
-              <Link className={on('/courses')} href="/courses">Courses</Link>
+              <CoursesDropdown categories={categories} path={path} />
               <Link className={on('/earnings')} href="/earnings">Earnings</Link>
               <Link className={on('/withdraw')} href="/withdraw">Withdraw</Link>
               <Link className={on('/profile')} href="/profile">Profile</Link>
@@ -218,7 +264,7 @@ export default function Header({ name }: { name: string }) {
           ) : (
             <>
               <Link href="/">Home</Link>
-              <Link className={on('/courses')} href="/courses">Courses</Link>
+              <CoursesDropdown categories={categories} path={path} />
               <Link className={on('/about')} href="/about" onClick={() => setOpen(false)}>About</Link>
               <a href="/#how" onClick={() => setOpen(false)}>How it works</a>
               <a href="/#why" onClick={() => setOpen(false)}>Why us</a>
