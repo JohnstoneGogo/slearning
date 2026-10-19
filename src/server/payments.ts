@@ -98,7 +98,7 @@ member('GET', '/payments/:ref', async ({ user, params }) => {
   let p = await prisma.payment.findFirst({ where: { reference: params.ref, userId: user.id } });
   if (!p) fail(404, 'Payment not found.');
   if (p!.status === 'pending' && provider().live) { // do not rely on the webhook alone
-    limit('chk:' + p!.id, 12, 60e3);
+    await limit('chk:' + p!.id, 12, 60e3);
     try { const v = await provider().verify(p!.reference); p = ((await confirmPayment(p!.reference, v.amount, v.currency, v.status)) as typeof p) || p; } catch { /* keep pending */ }
   }
   return p;

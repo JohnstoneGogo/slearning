@@ -2,6 +2,20 @@ import Link from 'next/link';
 import { imgSrc } from '@/lib/ui';
 import { money, type CourseItem } from '@/lib/api';
 
+const courseCovers: [RegExp, string][] = [
+  [/cooking|food/i, 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=960'],
+  [/business|money/i, 'https://images.pexels.com/photos/3184436/pexels-photo-3184436.jpeg?auto=compress&cs=tinysrgb&w=960'],
+  [/technology|tech/i, 'https://images.pexels.com/photos/3861969/pexels-photo-3861969.jpeg?auto=compress&cs=tinysrgb&w=960'],
+  [/health|wellness/i, 'https://images.pexels.com/photos/3822622/pexels-photo-3822622.jpeg?auto=compress&cs=tinysrgb&w=960'],
+  [/farm/i, 'https://images.pexels.com/photos/2132171/pexels-photo-2132171.jpeg?auto=compress&cs=tinysrgb&w=960'],
+  [/language/i, 'https://images.pexels.com/photos/590493/pexels-photo-590493.jpeg?auto=compress&cs=tinysrgb&w=960'],
+];
+
+export function courseCover(category?: string | null) {
+  return courseCovers.find(([match]) => match.test(category || ''))?.[1]
+    ?? 'https://images.pexels.com/photos/590493/pexels-photo-590493.jpeg?auto=compress&cs=tinysrgb&w=960';
+}
+
 export const Stars = ({ r }: { r: number }) => <span className="stars" aria-label={`${(+r || 0).toFixed(1)} out of 5`}>{'★'.repeat(Math.round(r || 0))}{'☆'.repeat(5 - Math.round(r || 0))}</span>;
 
 export function Img({ src, alt, cls = '', eager = false, full = false }: { src?: string | null; alt: string; cls?: string; eager?: boolean; full?: boolean }) {
@@ -34,10 +48,11 @@ export type CourseCardSource = Pick<CourseItem, 'id' | 'title' | 'author' | 'min
   percent?: number;
   priceGhs?: number | null;
   priceNgn?: number | null;
+  category?: string | null;
 };
 
 export function CourseCard({ c }: { c: CourseCardSource }) {
-  const cover = c.cover_url ?? c.coverUrl ?? null;
+  const cover = c.cover_url ?? c.coverUrl ?? courseCover(c.category);
   const ratingCount = c.rating_count ?? c.ratingCount ?? 0;
   const rewardEligible = c.reward_eligible ?? c.rewardEligible ?? false;
   const freePreview = c.has_free_preview ?? c.hasFreePreview ?? false;

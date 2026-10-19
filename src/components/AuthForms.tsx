@@ -5,7 +5,11 @@ import { useEffect, useState } from 'react';
 import { api, errMsg } from '@/lib/api';
 import { useAuth } from './Providers';
 
-const DIAL: Record<string, string> = { GH: '+233', NG: '+234' };
+const COUNTRIES = [
+  { code: 'GH', name: 'Ghana', dialCode: '+233' },
+  { code: 'NG', name: 'Nigeria', dialCode: '+234' },
+] as const;
+const DIAL = Object.fromEntries(COUNTRIES.map(country => [country.code, country.dialCode])) as Record<string, string>;
 function useForm<T extends Record<string, string>>(init: T) {
   const [v, setV] = useState(init), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
   const bind = (k: keyof T) => ({ name: String(k), value: v[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setV(x => ({ ...x, [k]: e.target.value })) });
@@ -33,8 +37,8 @@ export function SignupForm() {
     <label>Username<input {...f.bind('username')} required autoComplete="username" pattern="[A-Za-z0-9_]{3,20}" title="3-20 letters, numbers or underscores" /></label>
     <label>Full name<input {...f.bind('full_name')} required autoComplete="name" /></label>
     <label>Email address<input {...f.bind('email')} type="email" required autoComplete="email" /></label>
-    <label>Country<select {...f.bind('country')}><option value="GH">Ghana</option><option value="NG">Nigeria</option></select></label>
-    <label>WhatsApp number<input {...f.bind('phone')} type="tel" required placeholder={`${DIAL[f.v.country]} …`} autoComplete="tel" /></label>
+    <label>Country<select {...f.bind('country')}>{COUNTRIES.map(country => <option key={country.code} value={country.code}>{country.name}</option>)}</select></label>
+    <label>WhatsApp number<span className="phone-field"><span className="phone-dial" aria-label="Country calling code">{DIAL[f.v.country]}</span><input {...f.bind('phone')} type="tel" required placeholder="Phone number" autoComplete="tel-national" /></span></label>
     <label>Referrer ID (optional)<input {...f.bind('referrer_id')} /></label>
     <label>Password<input {...f.bind('password')} type="password" required minLength={8} autoComplete="new-password" /><small className="muted">At least 8 characters, with a letter and a number.</small></label>
     <label>Confirm password<input {...f.bind('confirm_password')} type="password" required autoComplete="new-password" /></label>

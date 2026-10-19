@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getCourse, getReviews } from '@/server/data';
-import { Img, Stars } from '@/components/bits';
+import { courseCover, Img, Stars } from '@/components/bits';
 import CourseActions from '@/components/CourseActions';
 import { money } from '@/lib/api';
 
@@ -57,7 +57,7 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
               </p>
               <CourseActions id={course.id} rewardEligible={course.rewardEligible} mode="hero" />
             </div>
-            <div><Img src={course.coverUrl} alt={`cover of ${course.title}`} cls="cover" eager full /></div>
+            <div><Img src={course.coverUrl ?? courseCover(course.category)} alt={`cover of ${course.title}`} cls="cover" eager full /></div>
           </div>
         </div>
       </div>

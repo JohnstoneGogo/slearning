@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import type { Prisma, User } from '@prisma/client';
@@ -409,7 +410,7 @@ member('DELETE', '/discussion/:id', async ({ user, params }) => {
 });
 
 // Signed, expiring links for private eBook PDFs
-pub('GET', '/files/:name', async ({ params, query }) => {
+pub('GET', '/files/:name', async ({ params, query, req }) => {
   // M-09: validate filename format before serving
   const n = path.basename(params.name);
   if (!/^[a-f0-9]+\.pdf$/.test(n)) fail(403, 'Invalid file reference.');
@@ -419,14 +420,28 @@ pub('GET', '/files/:name', async ({ params, query }) => {
     fail(403, 'This link has expired.');
   const f = path.join(UPLOADS, 'private', n);
   if (!fs.existsSync(f)) fail(404, 'File not found.');
-  return new Response(fs.readFileSync(f), {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'inline',
-      'Cache-Control': 'private, max-age=300',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  const size = fs.statSync(f).size;
+  const range = req.headers.get('range');
+  let start = 0, end = size - 1, status = 200;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+    if (!match || (!match[1] && !match[2])) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+    if (!match[1]) start = Math.max(size - Number(match[2]), 0);
+    else start = Number(match[1]);
+    if (match[2] && match[1]) end = Math.min(Number(match[2]), size - 1);
+    if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+    status = 206;
+  }
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': 'inline',
+    'Content-Length': String(end - start + 1),
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=300',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  return new Response(Readable.toWeb(fs.createReadStream(f, { start, end })) as ReadableStream, { status, headers });
 });
 
 member('POST', '/lessons/:id/complete', async ({ user, params }) => {

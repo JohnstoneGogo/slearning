@@ -124,6 +124,9 @@ form{display:grid;gap:14px}
 label{font-weight:600;font-size:.95rem;display:grid;gap:6px}
 input,select,textarea{font:inherit;color:inherit;background:var(--card);border:1.5px solid var(--line);border-radius:10px;padding:11px 12px;min-height:46px;width:100%}
 .formcard{max-width:520px;margin:0 auto}
+.phone-field{display:flex;min-width:0}
+.phone-dial{display:flex;align-items:center;padding:0 12px;background:var(--bg);border:1.5px solid var(--line);border-right:0;border-radius:10px 0 0 10px;font-weight:600;color:var(--muted)}
+.phone-field input{min-width:0;border-radius:0 10px 10px 0}
 .err{color:var(--red);font-weight:500;min-height:1.2em}
 .err:empty{min-height:0}
 .notice{border-left:6px solid var(--blue);background:var(--card);padding:16px 20px;border-radius:var(--r);margin-bottom:20px;display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
@@ -174,6 +177,8 @@ th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line)}
 .chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}
 .chip{flex:none;padding:8px 16px;border-radius:99px;border:1.5px solid var(--line);background:var(--card);text-decoration:none;font-weight:500;white-space:nowrap}
 .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.format-unavailable{display:flex;align-items:center;gap:8px;color:var(--muted);cursor:not-allowed}
+.format-unavailable small{font-weight:400}
 
 /* ── STATS ── */
 .stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))}
@@ -300,7 +305,7 @@ details[open] summary{margin-bottom:8px}
 .lp-cta-banner{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap}
 .lp-cta-white{background:#fff;border-color:#fff;color:var(--ink);min-height:52px;padding:12px 28px;border-radius:14px}
 .lp-cta-white:hover{background:var(--blue);border-color:var(--blue);color:#fff}
-.lp-cta-outline{border-color:rgba(255,255,255,.4);color:#fff;min-height:52px;padding:12px 28px;border-radius:14px}
+.lp-cta-outline{background:transparent;border-color:rgba(255,255,255,.4);color:#fff;min-height:52px;padding:12px 28px;border-radius:14px}
 .lp-cta-outline:hover{border-color:#fff;background:rgba(255,255,255,.1)}
 
 /* ── CONTACT GRID ── */
@@ -352,7 +357,7 @@ details[open] summary{margin-bottom:8px}
 .ft-logo{color:#fff;text-decoration:none}
 .ft-logo span{color:#fff}
 .ft-tagline{color:rgba(255,255,255,.5);font-size:.9rem;margin:10px 0 16px;max-width:28ch}
-.ft-wa{border-color:rgba(255,255,255,.25);color:#fff}
+.ft-wa{background:transparent;border-color:rgba(255,255,255,.25);color:#fff}
 .ft-wa:hover{border-color:#fff;background:rgba(255,255,255,.08)}
 .ft-heading{font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.4);margin:0 0 14px}
 .ft-links{list-style:none;padding:0;margin:0;display:grid;gap:10px}
@@ -519,7 +524,7 @@ textarea{min-height:100px}
 .lp-cta-section{padding:32px 0;background:var(--navy)}
 .lp-cta-banner{gap:16px}
 .lp-cta-white:hover{background:#edf2f7;border-color:#edf2f7;color:var(--navy)}
-.lp-cta-outline{border-color:#c7d3e0;color:#fff}
+.lp-cta-outline{background:transparent;border-color:#c7d3e0;color:#fff}
 .lp-cta-outline:hover{background:#24476e;border-color:#fff}
 .lp-trust-strip{padding:14px 0}
 .lp-trust-strip-label{font-size:.75rem;letter-spacing:.05em;margin-bottom:10px}

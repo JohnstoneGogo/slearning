@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, errMsg, type CourseItem, type LearningStats, type UpcomingLearning } from '@/lib/api';
 import { useRequireAuth } from './Providers';
-import { CourseCard, Img } from './bits';
+import { CourseCard, courseCover, Img } from './bits';
 import { Summary, VerifyBanner } from './Money';
 
 function EnrolledCourse({ course }: { course: CourseItem }) {
@@ -11,7 +11,7 @@ function EnrolledCourse({ course }: { course: CourseItem }) {
   return (
     <article className="dash-enrolled-course">
       <Link className="dash-enrolled-thumb" href={`/courses/${course.id}`} aria-label={`Open ${course.title}`}>
-        <Img src={course.cover_url} alt={`cover of ${course.title}`} />
+        <Img src={course.cover_url ?? courseCover()} alt={`cover of ${course.title}`} />
       </Link>
       <div className="dash-enrolled-info">
         <span className="dash-upcoming-course">ENROLLED COURSE</span>

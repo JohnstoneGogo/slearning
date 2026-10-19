@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { getCategories, getConfig, getFacts, listCourses } from '@/server/data';
-import { CourseCard, Img, Stars } from '@/components/bits';
+import { CourseCard, courseCover, Img, Stars } from '@/components/bits';
 import VideoHero from '@/components/VideoHero';
 import Animate from '@/components/Animate';
 
@@ -27,7 +27,7 @@ function FeaturedCourse({ course }: { course: { id: number; title: string; categ
   );
   return (
     <Link className="lp-hero-featured" href={`/courses/${course.id}`}>
-      <Img src={course.coverUrl} alt={`Course cover: ${course.title}`} cls="lp-hero-featured-image" eager />
+      <Img src={course.coverUrl ?? courseCover(course.category)} alt={`Course cover: ${course.title}`} cls="lp-hero-featured-image" eager />
       <div className="lp-hero-featured-body">
         <span className="lp-hero-learning-kicker">POPULAR COURSE</span>
         <h2>{course.title}</h2>

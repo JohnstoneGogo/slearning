@@ -34,6 +34,11 @@ export default async function Courses({ searchParams }: { searchParams: Promise<
       </div>
 
       <div className="wrap">
+        <div className="chips course-formats mt" role="group" aria-label="Course format">
+          <span className="chip on" aria-current="page">eBook courses</span>
+          <span className="chip format-unavailable" aria-disabled="true">Video courses <small>Coming soon</small></span>
+        </div>
+
         {/* Access filter: free previews vs courses that need activation */}
         <div className="chips mt">
           <Link className={`chip ${access ? '' : 'on'}`} href={href({ access: '', page: '' })}>All access</Link>
