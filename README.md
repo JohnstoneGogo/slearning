@@ -29,6 +29,13 @@ Images: CMS upload (auto-optimised WebP + thumbnail) or paste a URL; empty image
 Logo: temporary mark in `src/components/Logo.tsx` and `public/icon.svg`. Brand name comes from the `site` setting.
 Course catalogue: search by keyword, topic, skill level, access, duration, and language. Duration filters use each course's total minutes; language choices come from published courses.
 
+## Supabase Storage
+Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env` and in the production host's server-side environment. The service-role key is secret: never use it in browser code or commit it.
+
+The first upload creates two buckets if they do not exist: `public-media` (public, WebP images only) and `private-files` (private PDFs only, up to 50 MiB per file). The app uses short-lived signed links for private PDFs. Do not change either bucket's visibility.
+
+To move existing files from `uploads/public` and `uploads/private` and update matching database URLs, run `npm run storage:migrate`. It is safe to re-run and leaves the local files untouched. It stops without changing database URLs if any database image reference has no matching local file; restore that file and run the command again. Private PDFs larger than 50 MiB need a higher allowed upload limit in the Supabase project and bucket before migration. New CMS images, avatars, PDFs, and imported eBook files go directly to Supabase Storage.
+
 ## Payments (Paystack, GHS + NGN)
 1. Put your secret key in `PAYSTACK_SECRET_KEY`. Webhook URL in Paystack: `https://YOUR_DOMAIN/api/v1/webhooks/paystack`.
 2. For payouts: fund your Paystack balance and turn **off** "Confirm transfers before sending" in Paystack settings (otherwise transfers wait for an OTP).

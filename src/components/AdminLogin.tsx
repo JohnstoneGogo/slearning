@@ -28,7 +28,7 @@ export default function AdminLogin() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Login failed');
-      if (d.role !== 'admin') throw new Error('Access denied. Admin accounts only.');
+      if (d.user?.role !== 'admin') throw new Error('Access denied. Admin accounts only.');
       router.replace('/admin');
     } catch (x: any) {
       setErr(x.message);

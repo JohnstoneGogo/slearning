@@ -1,16 +1,9 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { createWriteStream } from 'node:fs';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
 import sharp from 'sharp';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { MAX_PRIVATE_FILE_BYTES, uploadPrivatePdf, uploadPublicFile } from '../src/server/storage';
 
-const uploadRoot = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-const privateDir = path.join(uploadRoot, 'private');
-const publicDir = path.join(uploadRoot, 'public');
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
 // Pressbooks (BCCampus, MSU, Boise State, Oregon State, Iowa State...) serves downloads through CloudFront,
@@ -392,35 +385,21 @@ const books = [
   },
 ] as const;
 
-async function downloadPdf(url: string, destination: string) {
-  if (fs.existsSync(destination)) return;
+async function downloadPdf(url: string) {
   // Without a timeout a single stalled host hangs the whole import indefinitely.
   const response = await fetch(url, { redirect: 'follow', headers: browserHeaders(url), signal: AbortSignal.timeout(10 * 60 * 1000) });
   if (!response.ok || !response.body) throw new Error(`PDF download failed (${response.status}): ${url}`);
   if (!/pdf/i.test(response.headers.get('content-type') || 'pdf')) throw new Error(`Expected a PDF but got ${response.headers.get('content-type')}: ${url}`);
   const length = Number(response.headers.get('content-length') || 0);
-  if (length > 100 * 1024 * 1024) throw new Error(`Refusing oversized PDF (${length} bytes): ${url}`);
-  const temporary = `${destination}.${process.pid}.part`;
-  try {
-    await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream), createWriteStream(temporary, { flags: 'w' }));
-    const file = await fs.promises.open(temporary, 'r');
-    const header = Buffer.alloc(5);
-    await file.read(header, 0, header.length, 0);
-    await file.close();
-    if (header.toString('ascii') !== '%PDF-') throw new Error(`Downloaded file is not a PDF: ${url}`);
-    await fs.promises.rename(temporary, destination);
-  } catch (error) {
-    await fs.promises.rm(temporary, { force: true });
-    throw error;
-  }
+  if (length > MAX_PRIVATE_FILE_BYTES) throw new Error(`PDF exceeds the Supabase private bucket limit of ${Math.round(MAX_PRIVATE_FILE_BYTES / 1024 / 1024)} MB (${length} bytes): ${url}`);
+  const pdf = Buffer.from(await response.arrayBuffer());
+  if (pdf.length > MAX_PRIVATE_FILE_BYTES) throw new Error(`PDF exceeds the Supabase private bucket limit of ${Math.round(MAX_PRIVATE_FILE_BYTES / 1024 / 1024)} MB (${pdf.length} bytes): ${url}`);
+  if (pdf.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error(`Downloaded file is not a PDF: ${url}`);
+  return pdf;
 }
 
 async function saveCover(url: string, name: string) {
-  const full = path.join(publicDir, name + '.webp');
-  const small = path.join(publicDir, name + '-480.webp');
   const isSvg = /svg/i.test(url);
-  // The full-size cover is cached, but SVG cards were previously cropped, so always re-render those.
-  if (fs.existsSync(full) && fs.existsSync(small) && !isSvg) return;
   const response = await fetch(url, { redirect: 'follow', headers: browserHeaders(url) });
   if (!response.ok) throw new Error(`Cover download failed (${response.status}): ${url}`);
   const image = Buffer.from(await response.arrayBuffer());
@@ -428,8 +407,13 @@ async function saveCover(url: string, name: string) {
   const svgOptions = /svg/i.test(response.headers.get('content-type') || '') || isSvg ? { density: 300 } : {};
   // Cards are 16/10 in the UI. `contain` keeps the whole OpenStax cover title readable instead of centre-cropping it.
   const fit = isSvg ? 'contain' : 'cover';
-  await sharp(image, svgOptions).resize({ width: 1200, height: 750, fit, background: '#ffffff' }).webp({ quality: 82 }).toFile(full);
-  await sharp(image, svgOptions).resize({ width: 480, height: 300, fit, background: '#ffffff' }).webp({ quality: 78 }).toFile(small);
+  const [full, small] = await Promise.all([
+    sharp(image, svgOptions).resize({ width: 1200, height: 750, fit, background: '#ffffff' }).webp({ quality: 82 }).toBuffer(),
+    sharp(image, svgOptions).resize({ width: 480, height: 300, fit, background: '#ffffff' }).webp({ quality: 78 }).toBuffer(),
+  ]);
+  const fullUrl = await uploadPublicFile(name + '.webp', full);
+  await uploadPublicFile(name + '-480.webp', small);
+  return fullUrl;
 }
 
 const LICENSE_URLS: Record<string, string> = {
@@ -448,7 +432,6 @@ function attributionFor(book: { title: string; author: string; source: string; l
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
-  await Promise.all([fs.promises.mkdir(privateDir, { recursive: true }), fs.promises.mkdir(publicDir, { recursive: true })]);
   const categoryIdFor = async (name: string | null) => {
     if (!name) return null;
     const category = await prisma.category.findFirst({ where: { name } })
@@ -469,14 +452,16 @@ async function main() {
       continue;
     }
     const assetId = crypto.createHash('sha256').update(book.pdf).digest('hex').slice(0, 32);
+    let pdf: Buffer;
     try {
-      await downloadPdf(book.pdf, path.join(privateDir, assetId + '.pdf'));
+      pdf = await downloadPdf(book.pdf);
     } catch (error) {
       // One unreachable or oversized book should not abort the whole import.
       console.error(`Skipped ${book.title}: ${(error as Error).message}`);
       continue;
     }
-    await saveCover(book.cover, book.coverName);
+    await uploadPrivatePdf(assetId + '.pdf', pdf);
+    const coverUrl = await saveCover(book.cover, book.coverName);
 
     const attribution = attributionFor(book);
     const existing = await prisma.course.findFirst({ where: { title: book.title } });
@@ -485,7 +470,7 @@ async function main() {
         title: book.title,
         author: book.author,
         description: `${book.description}\n\n${attribution}`,
-        coverUrl: `/uploads/${book.coverName}.webp`,
+        coverUrl,
         categoryId: await categoryIdFor(book.category),
         minutes: book.duration,
         level: 'Beginner',
@@ -497,8 +482,8 @@ async function main() {
         published: true,
       },
     });
-    if (existing?.description?.includes(book.source) && (existing.coverUrl !== `/uploads/${book.coverName}.webp` || !existing.published)) {
-      await prisma.course.update({ where: { id: existing.id }, data: { coverUrl: `/uploads/${book.coverName}.webp`, published: true } });
+    if (existing?.description?.includes(book.source) && (existing.coverUrl !== coverUrl || !existing.published)) {
+      await prisma.course.update({ where: { id: existing.id }, data: { coverUrl, published: true } });
     }
 
     const lessonTitle = `Read ${book.title} (PDF)`;

@@ -1,7 +1,4 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { Readable } from 'node:stream';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import type { Prisma, User } from '@prisma/client';
@@ -12,10 +9,9 @@ import { mail } from '../mail';
 import { member, pub, Res } from '../router';
 import { isLessonInPublishedCourse } from '../lesson-access';
 import { canAccessCourse } from '../course-access';
+import { createPrivateFileUrl, uploadPublicFile } from '../storage';
 import * as data from '../data';
 import '../payments';
-
-export const UPLOADS = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
 
 const BCRYPT_ROUNDS = 12;
 
@@ -204,11 +200,8 @@ member('POST', '/me/avatar', async ({ user, req }) => {
   checkImageMagic(buf); // M-08: verify by magic bytes, not Content-Type
   const sharp = (await import('sharp')).default;
   const id = (await import('node:crypto')).randomBytes(12).toString('hex');
-  const { join } = await import('node:path');
-  const { mkdirSync } = await import('node:fs');
-  mkdirSync(join(UPLOADS, 'public'), { recursive: true });
-  await sharp(buf).rotate().resize(200, 200, { fit: 'cover' }).webp({ quality: 85 }).toFile(join(UPLOADS, 'public', id + '-av.webp'));
-  const avatarUrl = '/uploads/' + id + '-av.webp';
+  const avatar = await sharp(buf).rotate().resize(200, 200, { fit: 'cover' }).webp({ quality: 85 }).toBuffer();
+  const avatarUrl = await uploadPublicFile(id + '-av.webp', avatar);
   await prisma.user.update({ where: { id: user.id }, data: { avatarUrl } });
   return { url: avatarUrl };
 });
@@ -410,38 +403,23 @@ member('DELETE', '/discussion/:id', async ({ user, params }) => {
 });
 
 // Signed, expiring links for private eBook PDFs
-pub('GET', '/files/:name', async ({ params, query, req }) => {
+pub('GET', '/files/:name', async ({ params, query }) => {
   // M-09: validate filename format before serving
-  const n = path.basename(params.name);
+  const n = params.name;
   if (!/^[a-f0-9]+\.pdf$/.test(n)) fail(403, 'Invalid file reference.');
   const exp = query.get('exp') || '', sig = query.get('sig') || '';
   const ok = crypto.createHmac('sha256', secret()).update(n + exp).digest('hex');
   if (!(+exp > Date.now() / 1000) || sig.length !== ok.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(ok)))
     fail(403, 'This link has expired.');
-  const f = path.join(UPLOADS, 'private', n);
-  if (!fs.existsSync(f)) fail(404, 'File not found.');
-  const size = fs.statSync(f).size;
-  const range = req.headers.get('range');
-  let start = 0, end = size - 1, status = 200;
-  if (range) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-    if (!match || (!match[1] && !match[2])) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
-    if (!match[1]) start = Math.max(size - Number(match[2]), 0);
-    else start = Number(match[1]);
-    if (match[2] && match[1]) end = Math.min(Number(match[2]), size - 1);
-    if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
-    status = 206;
-  }
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/pdf',
-    'Content-Disposition': 'inline',
-    'Content-Length': String(end - start + 1),
-    'Accept-Ranges': 'bytes',
-    'Cache-Control': 'private, max-age=300',
-    'X-Content-Type-Options': 'nosniff',
-  };
-  if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
-  return new Response(Readable.toWeb(fs.createReadStream(f, { start, end })) as ReadableStream, { status, headers });
+  const location = await createPrivateFileUrl(n);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: location,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
 });
 
 member('POST', '/lessons/:id/complete', async ({ user, params }) => {

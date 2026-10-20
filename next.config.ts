@@ -48,7 +48,7 @@ const nextConfig: NextConfig = {
           "img-src 'self' data: blob: https:",
           "font-src 'self' https://fonts.gstatic.com",
           `connect-src 'self' https://api.paystack.co${PROD ? '' : ' ws://127.0.0.1:* ws://localhost:*'}`,
-          "frame-src 'none'",
+          "frame-src 'self' https://*.supabase.co",
           "object-src 'none'",
           "base-uri 'self'",
           "form-action 'self'",
@@ -60,7 +60,7 @@ const nextConfig: NextConfig = {
     ];
 
     return [
-      { source: '/api/:path*', headers: corsHeaders },
+      ...(corsHeaders.length > 0 ? [{ source: '/api/:path*', headers: corsHeaders }] : []),
       { source: '/:path*', headers: security },
       { source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache' }] },
       {

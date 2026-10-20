@@ -39,7 +39,7 @@ function CoursesDropdown({ categories, path, desktop = false }: { categories: Na
 }
 
 export default function Header({ name, categories }: { name: string; categories: NavCategory[] }) {
-  const { me, logout } = useAuth();
+  const { me, logout, mounted } = useAuth();
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState<Note[] | null>(null);
@@ -131,7 +131,7 @@ export default function Header({ name, categories }: { name: string; categories:
 
           {/* Desktop nav */}
           <nav className="desk-nav" aria-label="Main navigation">
-            {me ? (
+            {!mounted ? null : me ? (
               <>
                 <Link className={on('/dashboard')} href="/dashboard">Dashboard</Link>
                 <CoursesDropdown categories={categories} path={path} desktop />
@@ -242,7 +242,7 @@ export default function Header({ name, categories }: { name: string; categories:
           </button>
         </div>
         <nav className="drawer-nav" aria-label="Mobile navigation">
-          {me ? (
+          {!mounted ? null : me ? (
             <>
               <Link className={on('/dashboard')} href="/dashboard">Dashboard</Link>
               <CoursesDropdown categories={categories} path={path} />

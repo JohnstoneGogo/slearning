@@ -13,6 +13,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:import-open-ebooks": "node --env-file=.env --import tsx scripts/import-open-ebooks.ts",
+    "storage:migrate": "node --env-file=.env --import tsx scripts/migrate-to-supabase-storage.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {
@@ -24,6 +25,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^6.19.0",
     "@prisma/client": "^6.19.0",
+    "@supabase/supabase-js": "^2.118.0",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.12",
     "next": "^15.5.27",

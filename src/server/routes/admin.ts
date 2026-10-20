@@ -1,15 +1,14 @@
 // CMS / admin API (role "admin"). The /admin web app, and any future mobile admin, use these same endpoints.
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { revalidatePath } from 'next/cache';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { audit, balances, camelKey, clearCache, fail, move } from '../core';
 import { admin } from '../router';
 import { confirmPayment, dispatchPayout, finishWithdrawal } from '../payments';
 import { provider } from '../providers';
 import { rate } from '../data';
-import { UPLOADS } from './app';
+import { uploadPrivatePdf, uploadPublicFile } from '../storage';
 
 const touch = () => { clearCache(); try { revalidatePath('/', 'layout'); } catch { /* outside a request */ } };
 
@@ -34,27 +33,212 @@ function shape(table: string, body: Record<string, unknown>) {
   return { model: (prisma as any)[spec.model], data: out };
 }
 
-admin('GET', '/admin/stats', async () => {
-  const [users, activated, courses, signups7d, revenue, pending, needsReview, mismatches] = await Promise.all([
-    prisma.user.count({ where: { role: 'member' } }), prisma.user.count({ where: { role: 'member', status: 'activated' } }), prisma.course.count(),
-    prisma.user.count({ where: { registeredAt: { gt: new Date(Date.now() - 7 * 864e5) } } }),
-    prisma.payment.groupBy({ by: ['currency'], where: { status: 'success' }, _sum: { amount: true }, _count: true }),
+admin('GET', '/admin/stats', async ({ query }) => {
+  const requestedDays = Number(query.get('days') || 30);
+  const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
+  const now = new Date();
+  const start = new Date(now.getTime() - days * 864e5);
+  const previousStart = new Date(now.getTime() - days * 2 * 864e5);
+  const previousRange = { gt: previousStart, lte: start };
+  const currentRange = { gt: start, lte: now };
+  const [users, activated, suspended, courses, publishedCourses, enrollments, completions,
+    signups, previousSignups, periodEnrollments, previousEnrollments, revenue, revenuePrev, pending, needsReview, mismatches,
+    periodCompletions, topCourses, recentPayments, recentSignups, supportOpen, instructors, certificates, drafts] = await Promise.all([
+    prisma.user.count({ where: { role: 'member' } }),
+    prisma.user.count({ where: { role: 'member', status: 'activated', suspended: false } }),
+    prisma.user.count({ where: { role: 'member', suspended: true } }),
+    prisma.course.count(),
+    prisma.course.count({ where: { published: true } }),
+    prisma.enrollment.count(),
+    prisma.enrollment.count({ where: { completedAt: { not: null } } }),
+    prisma.user.count({ where: { role: 'member', registeredAt: currentRange } }),
+    prisma.user.count({ where: { role: 'member', registeredAt: previousRange } }),
+    prisma.enrollment.count({ where: { createdAt: currentRange } }),
+    prisma.enrollment.count({ where: { createdAt: previousRange } }),
+    prisma.payment.groupBy({ by: ['currency'], where: { status: 'success', createdAt: currentRange }, _sum: { amount: true }, _count: true }),
+    prisma.payment.groupBy({ by: ['currency'], where: { status: 'success', createdAt: previousRange }, _sum: { amount: true }, _count: true }),
     prisma.withdrawal.groupBy({ by: ['currency'], where: { status: { in: ['processing', 'review'] } }, _sum: { amount: true }, _count: true }),
-    prisma.withdrawal.count({ where: { status: 'review' } }), prisma.payment.count({ where: { status: 'mismatch' } })]);
-  return { users, activated, courses, signups7d, needsReview, mismatches, provider: provider().name,
-    revenue: revenue.map(r => ({ currency: r.currency, total: r._sum.amount, n: r._count })), pendingWithdrawals: pending.map(r => ({ currency: r.currency, total: r._sum.amount, n: r._count })) };
+    prisma.withdrawal.count({ where: { status: 'review' } }),
+    prisma.payment.count({ where: { status: 'mismatch' } }),
+    prisma.enrollment.count({ where: { completedAt: currentRange } }),
+    prisma.course.findMany({ orderBy: [{ enrollments: { _count: 'desc' } }, { createdAt: 'desc' }], take: 5, select: { id: true, title: true, rating: true, published: true, _count: { select: { enrollments: true } } } }),
+    prisma.payment.findMany({ where: { status: 'success' }, orderBy: { id: 'desc' }, take: 8, select: { id: true, amount: true, currency: true, kind: true, createdAt: true, user: { select: { username: true } } } }),
+    prisma.user.findMany({ where: { role: 'member' }, orderBy: { registeredAt: 'desc' }, take: 8, select: { id: true, username: true, fullName: true, country: true, status: true, registeredAt: true, avatarUrl: true } }),
+    prisma.supportRequest.count({ where: { status: { in: ['open', 'in_progress'] } } }),
+    prisma.user.count({ where: { role: 'instructor' } }),
+    prisma.enrollment.count({ where: { certCode: { not: null } } }),
+    prisma.course.count({ where: { published: false } }),
+  ]);
+
+  const signupsByDay: number[] = [];
+  const enrollmentsByDay: number[] = [];
+  const buckets = await Promise.all(Array.from({ length: 7 }, (_, i) => {
+    const from = new Date(start.getTime() + (days * i / 7) * 864e5);
+    const to = i === 6 ? now : new Date(start.getTime() + (days * (i + 1) / 7) * 864e5);
+    return Promise.all([
+      prisma.user.count({ where: { role: 'member', registeredAt: { gt: from, lte: to } } }),
+      prisma.enrollment.count({ where: { createdAt: { gt: from, lte: to } } }),
+    ]);
+  }));
+  for (const [signupCount, enrollmentCount] of buckets) {
+    signupsByDay.push(signupCount);
+    enrollmentsByDay.push(enrollmentCount);
+  }
+  const prevRevMap = new Map(revenuePrev.map(r => [r.currency, r._sum.amount ?? 0]));
+  const completionRate = enrollments > 0 ? Math.round((completions / enrollments) * 100) : 0;
+  return {
+    users, activated, suspended, courses, publishedCourses, enrollments, completions, completionRate,
+    drafts, instructors, signups7d: signups, signups30d: signups, signupsPrev30d: previousSignups,
+    periodEnrollments, previousEnrollments, needsReview, mismatches, completions30d: periodCompletions,
+    supportOpen, certificates, rangeDays: days,
+    provider: provider().name, signupsByDay, enrollmentsByDay,
+    activationRate: users > 0 ? Math.round((activated / users) * 100) : 0,
+    revenue: revenue.map(r => ({ currency: r.currency, total: r._sum.amount ?? 0, n: r._count, prev: prevRevMap.get(r.currency) ?? 0 })),
+    pendingWithdrawals: pending.map(r => ({ currency: r.currency, total: r._sum.amount ?? 0, n: r._count })),
+    topCourses: topCourses.map(({ _count, ...course }) => ({ ...course, enrolments: _count.enrollments })),
+    recentPayments: recentPayments.map(({ user, ...p }) => ({ ...p, username: user.username })), recentSignups,
+  };
 });
-admin('GET', '/admin/users', async ({ query }) => {
+
+function userWhere(query: URLSearchParams): Prisma.UserWhereInput {
   const q = query.get('q')?.trim();
-  return prisma.user.findMany({ where: q ? { OR: ['username', 'email', 'memberId'].map(f => ({ [f]: { contains: q, mode: 'insensitive' } })) as any } : {}, orderBy: { id: 'desc' }, take: 200,
-    select: { id: true, memberId: true, username: true, email: true, fullName: true, country: true, status: true, eligible: true, emailVerified: true, suspended: true, role: true, registeredAt: true } });
+  const status = query.get('status')?.trim();
+  const role = query.get('role')?.trim();
+  const where: Prisma.UserWhereInput = { role: 'member' };
+  if (q) where.OR = ['username', 'email', 'memberId', 'fullName'].map(field => ({ [field]: { contains: q, mode: 'insensitive' } }));
+  if (status === 'activated') where.status = 'activated';
+  else if (status === 'registered') where.status = 'registered';
+  else if (status === 'suspended') where.suspended = true;
+  if (role === 'admin' || role === 'instructor') where.role = role;
+  return where;
+}
+
+admin('GET', '/admin/users', async ({ query }) => {
+  const requestedPage = Number(query.get('page') || 1);
+  let page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const where = userWhere(query);
+  const total = await prisma.user.count({ where });
+  const pages = Math.ceil(total / 50);
+  page = Math.min(page, Math.max(pages, 1));
+  const rows = await prisma.user.findMany({
+    where, orderBy: { registeredAt: 'desc' }, take: 50, skip: (page - 1) * 50,
+    select: { id: true, memberId: true, username: true, email: true, fullName: true, country: true, status: true, eligible: true, emailVerified: true, suspended: true, role: true, registeredAt: true, avatarUrl: true },
+  });
+  const enrollCounts = await prisma.enrollment.groupBy({ by: ['userId'], where: { userId: { in: rows.map(r => r.id) } }, _count: true });
+  const ec = new Map(enrollCounts.map(e => [e.userId, e._count]));
+  return { items: rows.map(r => ({ ...r, enrollments: ec.get(r.id) ?? 0 })), total, page, pageSize: 50, pages };
+});
+admin('GET', '/admin/users/export', async ({ query }) => {
+  const where = userWhere(query);
+  const users = await prisma.user.findMany({
+    where, orderBy: { registeredAt: 'desc' }, take: 10_000,
+    select: { memberId: true, username: true, fullName: true, email: true, country: true, status: true, suspended: true, registeredAt: true },
+  });
+  const total = await prisma.user.count({ where });
+  if (total > users.length) fail(400, 'Narrow the filters to export no more than 10,000 learners at a time.');
+  const csvValue = (value: unknown) => {
+    const text = String(value ?? '');
+    const safe = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+    return `"${safe.replace(/"/g, '""')}"`;
+  };
+  const lines = [
+    ['Member ID', 'Username', 'Full name', 'Email', 'Country', 'Status', 'Suspended', 'Registered at'].map(csvValue).join(','),
+    ...users.map(user => [user.memberId, user.username, user.fullName, user.email, user.country, user.status, user.suspended, user.registeredAt.toISOString()].map(csvValue).join(',')),
+  ];
+  return new Response(lines.join('\r\n'), {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="slearning-learners.csv"',
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+admin('GET', '/admin/courses', async ({ query }) => {
+  const requestedPage = Number(query.get('page') || 1);
+  let page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const q = query.get('q')?.trim();
+  const status = query.get('status');
+  const where: Prisma.CourseWhereInput = {};
+  if (q) where.title = { contains: q, mode: 'insensitive' };
+  if (status === 'published') where.published = true;
+  else if (status === 'draft') where.published = false;
+  const total = await prisma.course.count({ where });
+  const pages = Math.ceil(total / 25);
+  page = Math.min(page, Math.max(pages, 1));
+  const rows = await prisma.course.findMany({
+    where, orderBy: { createdAt: 'desc' }, take: 25, skip: (page - 1) * 25,
+    include: {
+      category: { select: { name: true } },
+      _count: { select: { enrollments: true, payments: true, progress: true, reviews: true, bookmarks: true, posts: true, quizzes: true } },
+    },
+  });
+  const completionCounts = await prisma.enrollment.groupBy({
+    by: ['courseId'], where: { courseId: { in: rows.map(course => course.id) }, completedAt: { not: null } }, _count: true,
+  });
+  const completedByCourse = new Map(completionCounts.map(row => [row.courseId, row._count]));
+  const items = rows.map(({ category, _count, ...course }) => {
+    const associatedRecords = Object.values(_count).reduce((sum, count) => sum + count, 0);
+    return {
+      ...course,
+      categoryName: category?.name ?? null,
+      enrollmentCount: _count.enrollments,
+      completionCount: completedByCourse.get(course.id) ?? 0,
+      safeToDelete: associatedRecords === 0,
+    };
+  });
+  return { items, total, page, pageSize: 25, pages };
+});
+admin('GET', '/admin/users/:id', async c => {
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid user ID.');
+  const u = await prisma.user.findUnique({ where: { id },
+    select: { id: true, memberId: true, username: true, email: true, fullName: true, country: true, phone: true, status: true, eligible: true, emailVerified: true, suspended: true, role: true, registeredAt: true, avatarUrl: true, deadlineAt: true } });
+  if (!u) fail(404, 'User not found.');
+  const [enrollmentCount, enrollments, completions, payments] = await Promise.all([
+    prisma.enrollment.count({ where: { userId: u!.id } }),
+    prisma.enrollment.findMany({
+      where: { userId: u!.id }, orderBy: { createdAt: 'desc' }, take: 30,
+      include: { course: { select: { title: true, lessons: { select: { id: true } } } } },
+    }),
+    prisma.enrollment.count({ where: { userId: u!.id, completedAt: { not: null } } }),
+    prisma.payment.findMany({ where: { userId: u!.id, status: 'success' }, orderBy: { id: 'desc' }, take: 10,
+      select: { id: true, amount: true, currency: true, kind: true, status: true, createdAt: true } }),
+  ]);
+  const completedLessons = await prisma.lessonProgress.groupBy({
+    by: ['courseId'], where: { userId: u!.id, courseId: { in: enrollments.map(row => row.courseId) } }, _count: true,
+  });
+  const progressByCourse = new Map(completedLessons.map(row => [row.courseId, row._count]));
+  return {
+    ...u,
+    enrollments: enrollments.map(({ course, ...enrollment }) => ({
+      ...enrollment,
+      courseTitle: course.title,
+      totalLessons: course.lessons.length,
+      lessonsDone: progressByCourse.get(enrollment.courseId) ?? 0,
+    })),
+    enrollmentCount,
+    completions,
+    payments,
+  };
 });
 admin('PATCH', '/admin/users/:id', async c => {
-  const u = await prisma.user.findUnique({ where: { id: +c.params.id } });
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid user ID.');
+  const u = await prisma.user.findUnique({ where: { id } });
   if (!u || u.role === 'admin') fail(400, 'Cannot change this user.');
   const b = await c.json() as Record<string, unknown>;
-  await prisma.user.update({ where: { id: u!.id }, data: { suspended: !!b.suspended } });
-  await audit(c.user.id, 'suspend', { id: u!.id, v: !!b.suspended });
+  const data: Record<string, unknown> = {};
+  if (b.suspended !== undefined) {
+    if (typeof b.suspended !== 'boolean') fail(400, 'suspended must be a boolean.');
+    data.suspended = b.suspended;
+  }
+  if (b.eligible !== undefined) {
+    if (typeof b.eligible !== 'boolean') fail(400, 'eligible must be a boolean.');
+    data.eligible = b.eligible;
+  }
+  if (!Object.keys(data).length) fail(400, 'Provide a supported account setting to update.');
+  await prisma.user.update({ where: { id: u!.id }, data });
+  await audit(c.user.id, 'user_update', { id: u!.id, ...data });
   return { ok: true };
 });
 admin('GET', '/admin/payments', async () => (await prisma.payment.findMany({ orderBy: { id: 'desc' }, take: 200, include: { user: { select: { username: true } }, course: { select: { title: true } } } })).map(({ user, course, ...p }) => ({ ...p, username: user.username, courseTitle: course?.title ?? null })));
@@ -87,9 +271,41 @@ admin('GET', '/admin/content/:t', async ({ params, query }) => {
   const { model } = shape(params.t, {}), cid = query.get('course_id');
   return model.findMany({ where: cid ? { courseId: +cid } : {}, orderBy: params.t === 'lessons' ? [{ sort: 'asc' }, { id: 'asc' }] : { id: 'desc' } });
 });
-admin('POST', '/admin/content/:t', async c => { const { model, data } = shape(c.params.t, await c.json() as Record<string, unknown>); const r = await model.create({ data }); touch(); return { id: r.id }; });
-admin('PUT', '/admin/content/:t/:id', async c => { const { model, data } = shape(c.params.t, await c.json() as Record<string, unknown>); if (Object.keys(data).length) await model.update({ where: { id: +c.params.id }, data }); touch(); return { ok: true }; });
-admin('DELETE', '/admin/content/:t/:id', async c => { const { model } = shape(c.params.t, {}); await model.delete({ where: { id: +c.params.id } }); touch(); return { ok: true }; });
+admin('POST', '/admin/content/:t', async c => {
+  const { model, data } = shape(c.params.t, await c.json() as Record<string, unknown>);
+  const row = await model.create({ data });
+  await audit(c.user.id, `content_create_${c.params.t}`, { id: row.id });
+  touch();
+  return { id: row.id };
+});
+admin('PUT', '/admin/content/:t/:id', async c => {
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid content ID.');
+  const { model, data } = shape(c.params.t, await c.json() as Record<string, unknown>);
+  if (Object.keys(data).length) await model.update({ where: { id }, data });
+  await audit(c.user.id, `content_update_${c.params.t}`, { id });
+  touch();
+  return { ok: true };
+});
+admin('DELETE', '/admin/content/:t/:id', async c => {
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid content ID.');
+  if (c.params.t === 'courses') {
+    const course = await prisma.course.findUnique({
+      where: { id },
+      select: { _count: { select: { enrollments: true, payments: true, progress: true, reviews: true, bookmarks: true, posts: true, quizzes: true } } },
+    });
+    if (!course) fail(404, 'Course not found.');
+    if (Object.values(course!._count).some(count => count > 0)) {
+      fail(409, 'This course has learner activity or associated records and cannot be deleted. Unpublish it instead.');
+    }
+  }
+  const { model } = shape(c.params.t, {});
+  await model.delete({ where: { id } });
+  await audit(c.user.id, `content_delete_${c.params.t}`, { id });
+  touch();
+  return { ok: true };
+});
 admin('GET', '/admin/pages', async () => prisma.page.findMany({ orderBy: { slug: 'asc' } }));
 admin('PUT', '/admin/pages/:slug', async c => {
   if (!/^[a-z0-9-]{2,40}$/.test(c.params.slug)) fail(400, 'Slug: lowercase letters, numbers, dashes.');
@@ -112,13 +328,11 @@ admin('POST', '/admin/upload', async c => {
   const buf = Buffer.from(await c.req.arrayBuffer());
   const id = crypto.randomBytes(12).toString('hex');
   if (!buf.length || buf.length > 12e6) fail(400, 'No file received (max 12 MB).');
-  fs.mkdirSync(path.join(UPLOADS, 'public'), { recursive: true });
-  fs.mkdirSync(path.join(UPLOADS, 'private'), { recursive: true });
   if (type === 'application/pdf') {
     // H-05: verify PDF magic bytes (%PDF)
     if (buf[0] !== 0x25 || buf[1] !== 0x50 || buf[2] !== 0x44 || buf[3] !== 0x46)
       fail(400, 'File content does not appear to be a valid PDF.');
-    fs.writeFileSync(path.join(UPLOADS, 'private', id + '.pdf'), buf);
+    await uploadPrivatePdf(id + '.pdf', buf);
     return { url: 'private:' + id + '.pdf' };
   }
   // H-05: verify image magic bytes
@@ -130,9 +344,13 @@ admin('POST', '/admin/upload', async c => {
   const isGif = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38;
   if (!isPng && !isJpeg && !isWebp && !isGif) fail(400, 'File content does not match an allowed image type.');
   const sharp = (await import('sharp')).default;
-  await sharp(buf).rotate().resize({ width: 1200, withoutEnlargement: true }).webp({ quality: 80 }).toFile(path.join(UPLOADS, 'public', id + '.webp'));
-  await sharp(buf).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 75 }).toFile(path.join(UPLOADS, 'public', id + '-480.webp'));
-  return { url: '/uploads/' + id + '.webp' };
+  const [full, thumbnail] = await Promise.all([
+    sharp(buf).rotate().resize({ width: 1200, withoutEnlargement: true }).webp({ quality: 80 }).toBuffer(),
+    sharp(buf).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 75 }).toBuffer(),
+  ]);
+  const url = await uploadPublicFile(id + '.webp', full);
+  await uploadPublicFile(id + '-480.webp', thumbnail);
+  return { url };
 });
 
 // ── Support requests ──
@@ -206,15 +424,50 @@ admin('GET', '/admin/progress', async ({ query }) => {
   return courses.map(({ _count, ...c }) => ({ ...c, lessons: _count.lessons, enrolled: _count.enrollments, completed: byCourse.get(c.id) ?? 0 }));
 });
 
+// ── Enrollments ──
+admin('GET', '/admin/enrollments', async ({ query }) => {
+  const cid = query.get('course_id');
+  const uid = query.get('user_id');
+  const where: Record<string, unknown> = {};
+  if (cid) where.courseId = +cid;
+  if (uid) where.userId = +uid;
+  const rows = await prisma.enrollment.findMany({
+    where: where as any, orderBy: { createdAt: 'desc' }, take: 300,
+    include: { user: { select: { username: true, fullName: true, country: true } }, course: { select: { title: true, lessons: { select: { id: true } } } } },
+  });
+  const courseIds = [...new Set(rows.map(r => r.courseId))];
+  const userIds = [...new Set(rows.map(r => r.userId))];
+  const progress = await prisma.lessonProgress.groupBy({ by: ['userId', 'courseId'], where: { userId: { in: userIds }, courseId: { in: courseIds } }, _count: true });
+  const progMap = new Map(progress.map(p => [`${p.userId}:${p.courseId}`, p._count]));
+  return rows.map(({ user, course, ...e }) => ({
+    ...e, username: user.username, full_name: user.fullName, country: user.country,
+    course_title: course.title, total_lessons: course.lessons.length,
+    lessons_done: progMap.get(`${e.userId}:${e.courseId}`) ?? 0,
+  }));
+});
+
+admin('GET', '/admin/certificates', async () => prisma.enrollment.findMany({
+  where: { certCode: { not: null } },
+  orderBy: { completedAt: 'desc' },
+  take: 200,
+  select: {
+    certCode: true, completedAt: true, createdAt: true,
+    user: { select: { fullName: true, username: true, memberId: true } },
+    course: { select: { title: true } },
+  },
+}));
+
 // ── Instructors (admin-role users) ──
 admin('GET', '/admin/instructors', async () => {
   const rows = await prisma.user.findMany({
     where: { role: { in: ['admin', 'instructor'] } }, orderBy: { id: 'asc' },
     select: { id: true, memberId: true, username: true, email: true, fullName: true, country: true, role: true, suspended: true, registeredAt: true },
   });
-  return Promise.all(rows.map(async r => ({
-    ...r, courses: await prisma.course.count({ where: { author: r.fullName } }),
-  })));
+  const counts = await prisma.course.groupBy({
+    by: ['author'], where: { author: { in: rows.map(row => row.fullName) } }, _count: true,
+  });
+  const coursesByAuthor = new Map(counts.map(row => [row.author, row._count]));
+  return rows.map(row => ({ ...row, courses: coursesByAuthor.get(row.fullName) ?? 0 }));
 });
 admin('POST', '/admin/instructors', async c => {
   const b = await c.json() as Record<string, unknown>;
