@@ -1,9 +1,6 @@
 import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 
-const p = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
-});
+const p = new PrismaClient();
 
 const courses = await p.course.findMany({
   select: { title: true, coverUrl: true },

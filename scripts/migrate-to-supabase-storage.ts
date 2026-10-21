@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
 import {
   ensureStorageBuckets,
   supabaseStorage,
@@ -13,7 +12,7 @@ import {
 } from '../src/server/storage';
 
 const uploadRoot = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+const prisma = new PrismaClient();
 
 async function filesUnder(directory: string): Promise<string[]> {
   let entries;
