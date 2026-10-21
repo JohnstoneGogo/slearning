@@ -5,8 +5,9 @@ datasource db {
 }
 
 generator client {
-  provider   = "prisma-client-js"
-  engineType = "client" // uses the pg driver adapter: no native query-engine binary to ship
+  provider      = "prisma-client-js"
+  engineType    = "binary"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 model User {
