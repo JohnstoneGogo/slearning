@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { MAX_PRIVATE_FILE_BYTES, uploadPrivatePdf, uploadPublicFile } from '../src/server/storage';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
 // Pressbooks (BCCampus, MSU, Boise State, Oregon State, Iowa State...) serves downloads through CloudFront,
 // which rejects bare requests. A normal browser header set is required or every PDF comes back as HTML.
