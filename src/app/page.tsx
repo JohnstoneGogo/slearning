@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { getCategories, getConfig, getFacts, listCourses } from '@/server/data';
 import { CourseCard, courseCover, Img, Stars } from '@/components/bits';
 import VideoHero from '@/components/VideoHero';
+import WalkthroughVideo from '@/components/WalkthroughVideo';
 import Animate from '@/components/Animate';
 
 export const dynamic = 'force-dynamic';
@@ -164,6 +165,18 @@ export default async function Landing() {
                 <p className="muted" style={{ margin: 0, fontSize: '.95rem' }}>{desc}</p>
               </Animate>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── SEE HOW IT WORKS (VIDEO) ── */}
+      <section className="lp-section" id="walkthrough">
+        <div className="wrap">
+          <Animate><div className="lp-section-label">Walkthrough</div></Animate>
+          <Animate delay={60}><h2 className="lp-section-title">See how Slearning works</h2></Animate>
+          <Animate delay={100}><p className="muted lp-section-sub">A short tour of signing up, learning, earning certificates, and rewards.</p></Animate>
+          <div style={{ marginTop: '2rem', maxWidth: '860px', marginInline: 'auto' }}>
+            <WalkthroughVideo url={s.walkthrough_video_url || s.video_url} poster={s.walkthrough_poster || s.video_poster} />
           </div>
         </div>
       </section>

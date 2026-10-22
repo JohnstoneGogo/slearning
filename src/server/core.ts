@@ -3,7 +3,7 @@ import { prisma, type Tx } from './db';
 
 export const CUR: Record<string, string> = { GH: 'GHS', NG: 'NGN' };
 export const PROD = process.env.NODE_ENV === 'production';
-export const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+export const APP_URL = (process.env.APP_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
 
 /**
  * Returns the JWT signing secret.
@@ -39,9 +39,19 @@ export class HttpError extends Error {
 export const fail = (status: number, message: string): never => { throw new HttpError(status, message); };
 
 // ---- settings (JSON rows editable in the CMS) ----
+// Memoised in-process (60s, per instance) so the hot paths do not spend a
+// pooled connection on a settings row on every request. The CMS write path
+// calls clearCache(), which also drops these entries.
+const CFG_TTL = 60e3;
+const cfgStore = new Map<string, { v: unknown; exp: number }>();
+export const clearCfg = () => cfgStore.clear();
 export async function cfg<T = unknown>(key: string): Promise<T> {
+  const c = cfgStore.get(key);
+  if (c && c.exp > Date.now()) return c.v as T;
   const r = await prisma.setting.findUnique({ where: { key } });
-  return (r ? r.value : null) as T;
+  const v = (r ? r.value : null) as T;
+  cfgStore.set(key, { v, exp: Date.now() + CFG_TTL });
+  return v;
 }
 export const audit = (actor: number | null, action: string, detail: object = {}) =>
   prisma.auditLog.create({ data: { actor, action, detail } });
@@ -122,6 +132,7 @@ export async function cached<T>(key: string, ttl: number, fn: () => Promise<T>):
 }
 export const clearCache = () => {
   store.clear();
+  clearCfg();
   // fire-and-forget Redis bust — callers do not need to await this
   void redis().then(r => r?.set('cache:__bust', '1', 1).catch(() => {}));
 };

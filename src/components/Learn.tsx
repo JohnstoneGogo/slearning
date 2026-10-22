@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { api, errMsg } from '@/lib/api';
 import { useRequireAuth } from './Providers';
 import { Prose } from './bits';
+import DocReader from './DocReader';
 
 interface L { id: number; title: string; kind: string; minutes: number; preview: boolean }
 interface Course { id: number; title: string; lessons: L[] }
@@ -33,8 +34,9 @@ export default function Learn({ id }: { id: string }) {
   const body = locked ? <div className="card"><h3>This lesson is for active members</h3><p className="muted">{locked}</p><Link className="btn primary" href="/activate">Activate account</Link></div>
     : !lesson ? <div className="skel" style={{ height: 240 }} />
     : lesson.kind === 'video' ? (!lesson.url ? <p className="muted">Video coming soon.</p> : /\/embed\//.test(lesson.url) ? <iframe className="embed" src={lesson.url} allow="fullscreen" title={lesson.title} /> : <video className="embed" src={lesson.url} controls playsInline preload="metadata" />)
-    : lesson.kind === 'pdf' ? (lesson.url ? <><iframe className="pdf" src={lesson.url} title={lesson.title} /><p><a href={lesson.url} target="_blank" rel="noopener noreferrer">Open in a new tab</a></p></> : <p className="muted">eBook coming soon.</p>)
-    : <div className="prose"><Prose text={lesson.content || ''} /></div>;
+    : lesson.kind === 'pdf' ? (lesson.content || lesson.url ? <DocReader title={lesson.title} text={lesson.content || ''} pdfUrl={lesson.url} /> : <p className="muted">eBook coming soon.</p>)
+    : lesson.kind === 'ebook' ? <DocReader title={lesson.title} text={lesson.content || ''} pdfUrl={lesson.url} />
+    : <DocReader title={lesson.title} text={lesson.content || ''} />;
   return <div className="wrap"><section>
     <p><Link href={`/courses/${c.id}`}>← {c.title}</Link></p>
     <div className="player">

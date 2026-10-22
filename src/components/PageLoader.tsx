@@ -15,7 +15,9 @@ export default function PageLoader() {
   if (!visible) return null;
   return (
     <div className="page-loader" aria-hidden="true">
-      <span /><span /><span />
+      <div className="orbit">
+        <span /><span /><span />
+      </div>
     </div>
   );
 }

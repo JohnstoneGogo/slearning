@@ -38,7 +38,7 @@ function checkOrigin(req: Request): void {
     if (PROD) throw new HttpError(403, 'Missing Origin header.');
     return;
   }
-  const allowed = APP_URL.replace(/\/$/, '');
+  const allowed = APP_URL;
   if (!origin.startsWith(allowed)) throw new HttpError(403, 'Cross-origin request blocked.');
 }
 

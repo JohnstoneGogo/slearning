@@ -42,7 +42,7 @@ export function SignupForm() {
     <label>Referrer ID (optional)<input {...f.bind('referrer_id')} /></label>
     <label>Password<input {...f.bind('password')} type="password" required minLength={8} autoComplete="new-password" /><small className="muted">At least 8 characters, with a letter and a number.</small></label>
     <label>Confirm password<input {...f.bind('confirm_password')} type="password" required autoComplete="new-password" /></label>
-    <p className="err" role="alert">{f.err}</p><button className="btn primary block" disabled={f.busy}>Create account</button>
+    <p className="err" role="alert">{f.err}</p><button className="btn primary block" disabled={f.busy} aria-busy={f.busy}>{f.busy ? 'Creating account…' : 'Create account'}</button>
     <p className="muted">Already a member? <Link href="/login">Log in</Link></p></form></Shell>;
 }
 
