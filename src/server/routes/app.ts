@@ -124,7 +124,7 @@ pub('POST', '/auth/register', async c => {
     },
   });
   await notify(prisma, u.id, 'Welcome', 'Your account is created. Verify your email, then activate your account.', '/activate');
-  void sendVerify(u);
+  void sendVerify(u).catch(e => console.error(JSON.stringify({ level: 'error', msg: 'sendVerify failed', ts: new Date().toISOString() })));
   return session(u, 201);
 });
 
