@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getCategories, getConfig, getFacts, listCourses } from '@/server/data';
+import { getCategories, getConfig, getFacts, getRegisteredLearnerCount, listCourses } from '@/server/data';
 import { CourseCard, courseCover, Img, Stars } from '@/components/bits';
 import VideoHero from '@/components/VideoHero';
 import WalkthroughVideo from '@/components/WalkthroughVideo';
@@ -11,7 +11,7 @@ const Icon = ({ d }: { d: string }) => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
 );
 
-function FeaturedCourse({ course }: { course: { id: number; title: string; category: string | null; coverUrl: string | null; level: string; minutes: number } | undefined }) {
+function FeaturedCourse({ course }: { course: { id: number; title: string; author: string | null; description: string | null; category: string | null; coverUrl: string | null; level: string; minutes: number; lessons: number; has_free_preview: boolean; rewardEligible: boolean } | undefined }) {
   if (!course) return (
     <div className="lp-hero-learning" aria-label="S Learning course experience">
       <div className="lp-hero-learning-head"><span className="lp-hero-learning-mark"><Icon d="M4 5.5c3.5-1.1 6.8-.5 10 1.5v14c-3.2-2-6.5-2.6-10-1.5v-14Zm16 0c-3.5-1.1-6.8-.5-10 1.5v14c3.2-2 6.5-2.6 10-1.5v-14Z" /></span><b>S Learning</b><span>Learning platform</span></div>
@@ -28,14 +28,25 @@ function FeaturedCourse({ course }: { course: { id: number; title: string; categ
   );
   return (
     <Link className="lp-hero-featured" href={`/courses/${course.id}`}>
-      <Img src={course.coverUrl ?? courseCover(course.category)} alt={`Course cover: ${course.title}`} cls="lp-hero-featured-image" eager />
+      <div className="lp-hero-featured-art">
+        <Img src={course.coverUrl ?? courseCover(course.category)} alt={`Course cover: ${course.title}`} cls="lp-hero-featured-image" eager />
+        <div className="lp-hero-featured-art-overlay" aria-hidden="true">
+          <span className="lp-hero-art-label">Featured course</span>
+          {course.has_free_preview && <span className="lp-hero-art-preview">Preview available</span>}
+        </div>
+      </div>
       <div className="lp-hero-featured-body">
-        <span className="lp-hero-learning-kicker">POPULAR COURSE</span>
+        <span className="lp-hero-learning-kicker">{course.category || 'POPULAR COURSE'}</span>
         <h2>{course.title}</h2>
+        {course.author && <p className="lp-hero-featured-author">By {course.author}</p>}
+        {course.description && <p className="lp-hero-featured-description">{course.description}</p>}
         <div className="lp-hero-featured-meta">
           {course.category && <span>{course.category}</span>}
           <span>{course.level}</span>
+          <span>{course.lessons} lessons</span>
           <span>{course.minutes} min</span>
+          {course.has_free_preview && <span>Free preview</span>}
+          {course.rewardEligible && <span>Reward eligible</span>}
         </div>
         <span className="lp-hero-featured-link">Explore course <span aria-hidden="true">→</span></span>
       </div>
@@ -43,18 +54,33 @@ function FeaturedCourse({ course }: { course: { id: number; title: string; categ
   );
 }
 
-const trustBadges = ['Secure payments', 'Mobile money', 'Cards', 'Bank transfer', 'Ghana', 'Nigeria'];
+interface HomepageReview { name: string; country?: string; rating: number; text: string }
 
-/** Trust strip badges, mirrored below as a reflection. */
-const TrustBadges = ({ reflect = false }: { reflect?: boolean }) => (
-  <div className="lp-trust-logos" aria-hidden={reflect || undefined}>
-    {trustBadges.map((b) => <span key={b} className="lp-trust-badge">{b}</span>)}
-  </div>
-);
+function isHomepageReview(value: unknown): value is HomepageReview {
+  if (typeof value !== 'object' || value === null) return false;
+  const review = value as Record<string, unknown>;
+  return typeof review.name === 'string' && !!review.name.trim()
+    && (review.country === undefined || typeof review.country === 'string')
+    && typeof review.rating === 'number' && review.rating >= 1 && review.rating <= 5
+    && typeof review.text === 'string' && !!review.text.trim()
+    && !/replace with a genuine learner review/i.test(review.text);
+}
 
 export default async function Landing() {
-  const [cfg, facts, cats, pop] = await Promise.all([getConfig(), getFacts(), getCategories(), listCourses({ sort: 'popular', limit: 4 })]);
+  const [cfg, facts, cats, pop, learnerCount] = await Promise.all([
+    getConfig(), getFacts(), getCategories(), listCourses({ sort: 'popular', limit: 4 }), getRegisteredLearnerCount()
+  ]);
   const s = cfg.site;
+  const reviews = (Array.isArray(cfg.reviews) ? cfg.reviews : []).filter(isHomepageReview);
+  const visibleFacts = facts.filter(f => f.title.trim() && f.body.trim() && !/\b(?:replace this|placeholder text)\b/i.test(`${f.title} ${f.body}`));
+  const visibleCategories = cats.filter(c => c.count > 0).slice(0, 6);
+  const walkthroughUrl = s.walkthrough_video_url || s.video_url;
+  const stats = [
+    ...(learnerCount > 0 ? [[learnerCount.toLocaleString(), 'Registered learners']] : []),
+    ...(pop.total > 0 ? [[pop.total.toLocaleString(), 'Published courses']] : []),
+    ...(cfg.countries.length > 0 ? [[String(cfg.countries.length), 'Supported countries']] : []),
+    ['Verifiable', 'Course certificates']
+  ];
 
   return (
     <>
@@ -86,7 +112,7 @@ export default async function Landing() {
             <div className="lp-hero-vid fade-up in" style={{ transitionDelay: '120ms' }}>
               {s.video_url
                 ? <VideoHero url={s.video_url} poster={s.video_poster} />
-                : <FeaturedCourse course={pop.items[0] ? { ...pop.items[0], coverUrl: s.video_poster || pop.items[0].coverUrl } : undefined} />
+                : <FeaturedCourse course={pop.items[0]} />
               }
             </div>
           </div>
@@ -94,20 +120,20 @@ export default async function Landing() {
       </div>
 
       {/* ── STATS ── */}
-      <section className="lp-stats-section">
+      {stats.length > 0 && <section className="lp-stats-section">
         <div className="wrap">
           <div className="lp-stats">
-            {[[s.stat_learners, 'Learners'], [s.stat_courses, 'Courses & eBooks'], [s.stat_countries || '2', 'Countries'], ['Available', 'Certificate on completion']].map(([v, l], i) => (
+            {stats.map(([v, l], i) => (
               <div key={l} className="lp-stat-item fade-up in" style={{ transitionDelay: `${i * 80}ms` }}>
                 <b>{v}</b><span>{l}</span>
               </div>
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── POPULAR COURSES ── */}
-      <section className="lp-section lp-popular-section">
+      {pop.items.length > 0 && <section className="lp-section lp-popular-section">
         <div className="wrap">
           <div className="lp-section-head">
             <Animate>
@@ -122,23 +148,16 @@ export default async function Landing() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── TRUST STRIP ── */}
       <section className="lp-trust-strip">
         <div className="wrap">
-          <p className="lp-trust-strip-label">Trusted payments &amp; secure platform</p>
-          <div className="lp-trust-carousel">
-            <div className="lp-trust-track">
-              <TrustBadges />
-              <TrustBadges />
-            </div>
-          </div>
-          <div className="lp-trust-carousel lp-trust-carousel-reflect" aria-hidden="true">
-            <div className="lp-trust-track">
-              <TrustBadges reflect />
-              <TrustBadges reflect />
-            </div>
+          <p className="lp-trust-strip-label">Designed for practical learning</p>
+          <div className="lp-trust-logos">
+            {['Mobile-friendly learning', 'Preview lessons on selected courses', 'Verifiable course certificates', 'Rewards on eligible courses', 'Ghana & Nigeria'].map(badge => (
+              <span key={badge} className="lp-trust-badge">{badge}</span>
+            ))}
           </div>
         </div>
       </section>
@@ -170,7 +189,7 @@ export default async function Landing() {
       </section>
 
       {/* ── SEE HOW IT WORKS (VIDEO) ── */}
-      <section className="lp-section" id="walkthrough">
+      {walkthroughUrl && <section className="lp-section" id="walkthrough">
         <div className="wrap">
           <Animate><div className="lp-section-label">Walkthrough</div></Animate>
           <Animate delay={60}><h2 className="lp-section-title">See how Slearning works</h2></Animate>
@@ -179,7 +198,7 @@ export default async function Landing() {
             <WalkthroughVideo url={s.walkthrough_video_url || s.video_url} poster={s.walkthrough_poster || s.video_poster} />
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── WHY CHOOSE US ── */}
       <section className="lp-section lp-alt" id="why">
@@ -189,14 +208,15 @@ export default async function Landing() {
           <Animate delay={100}><p className="muted lp-section-sub">Everything you need to grow your skills and earn rewards — designed for Ghana and Nigeria.</p></Animate>
           <div className="lp-features" style={{ marginTop: '2.5rem' }}>
             {[
-              ['Certified Learning', 'Every completed course earns you a verifiable certificate you can share with employers.'],
-              ['Rewards', 'Eligible learners earn rewards credited directly to their account and withdrawable via mobile money or bank.'],
-              ['Mobile Learning', 'Optimised for smartphones. Learn on the go — no laptop needed.'],
-              ['Secure Payments', 'Payments and earnings are recorded through the platform.'],
-              ['Local Payments', 'Pay with MTN MoMo, Vodafone Cash, Airtel Money, cards, or bank transfer.'],
-              ['Referral Bonuses', 'Invite friends and earn when they activate their accounts.'],
-            ].map(([title, desc], i) => (
+              ['Certified Learning', 'Complete course requirements to earn a verifiable certificate you can share.', 'M4 4h16v16H4z M8 8h8 M8 12h5 M8 16h3'],
+              ['Rewards', 'Eligible learners can earn rewards credited directly to their account.', 'M12 3v18 M17 7.5c0-1.4-2.2-2.5-5-2.5S7 6.1 7 7.5 9.2 10 12 10s5 1.1 5 2.5-2.2 2.5-5 2.5-5-1.1-5-2.5'],
+              ['Mobile Learning', 'Learn from your phone with a platform designed for smaller screens.', 'M7 2h10v20H7z M11 18h2'],
+              ['Secure Payments', 'Payments and earnings are recorded through your account.', 'M3 6h18v12H3z M3 10h18 M7 15h3'],
+              ['Local Payments', 'Payment options include mobile money and bank transfer, depending on your country.', 'M3 10h18 M5 10V6l7-3 7 3v4 M5 10v9 M10 10v9 M14 10v9 M19 10v9 M3 21h18'],
+              ['Referral Bonuses', 'Eligible referrals can earn a bonus when they activate their accounts.', 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M20 8v6 M23 11h-6'],
+            ].map(([title, desc, icon], i) => (
               <Animate key={title as string} delay={i * 60} className="lp-feature-card">
+                <span className="lp-feature-icon"><Icon d={icon as string} /></span>
                 <h3>{title}</h3>
                 <p className="muted" style={{ margin: 0, fontSize: '.95rem' }}>{desc}</p>
               </Animate>
@@ -206,7 +226,7 @@ export default async function Landing() {
       </section>
 
       {/* ── CATEGORIES ── */}
-      <section className="lp-section lp-alt" id="courses">
+      {visibleCategories.length > 0 && <section className="lp-section lp-alt" id="courses">
         <div className="wrap">
           <div className="lp-section-head">
             <Animate>
@@ -216,7 +236,7 @@ export default async function Landing() {
             <Animate><Link href="/courses" className="btn">All courses →</Link></Animate>
           </div>
           <div className="grid">
-            {cats.slice(0, 6).map((c, i) => (
+            {visibleCategories.map((c, i) => (
               <Animate key={c.id} delay={i * 60}>
                 <Link className="card flat lp-cat-card" href={`/courses?cat=${c.id}`} style={{ textDecoration: 'none', display: 'block' }}>
                   <Img src={c.thumbUrl} alt={c.name} />
@@ -229,32 +249,32 @@ export default async function Landing() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── REVIEWS ── */}
-      <section className="lp-section lp-alt" id="reviews">
+      {reviews.length > 0 && <section className="lp-section lp-alt" id="reviews">
         <div className="wrap">
           <Animate><div className="lp-section-label">Testimonials</div></Animate>
           <Animate delay={60}><h2 className="lp-section-title">What learners say</h2></Animate>
           <div className="grid" style={{ marginTop: '2rem' }}>
-            {(cfg.reviews || []).map((r: any, i: number) => (
+            {reviews.map((r, i) => (
               <Animate key={i} delay={i * 80} className="lp-review-card">
                 <Stars r={r.rating} />
                 <p style={{ margin: '12px 0' }}>&ldquo;{r.text}&rdquo;</p>
-                <div className="lp-reviewer"><b>{r.name}</b><span className="tag">{r.country}</span></div>
+                <div className="lp-reviewer"><b>{r.name}</b>{r.country && <span className="tag">{r.country}</span>}</div>
               </Animate>
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── DID YOU KNOW ── */}
-      <section className="lp-section">
+      {visibleFacts.length > 0 && <section className="lp-section">
         <div className="wrap">
           <Animate><div className="lp-section-label">Insights</div></Animate>
           <Animate delay={60}><h2 className="lp-section-title">Did you know?</h2></Animate>
           <div className="facts" style={{ marginTop: '2rem' }}>
-            {facts.map((f, i) => (
+            {visibleFacts.map((f, i) => (
               <Animate key={f.id} delay={i * 80} style={{ display: 'contents' }}>
                 <div className="card flat lp-fact-card">
                   <Img src={f.imageUrl} alt="illustration" />
@@ -268,7 +288,7 @@ export default async function Landing() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── CTA BANNER ── */}
       <section className="lp-cta-section">

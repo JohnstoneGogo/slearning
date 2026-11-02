@@ -12,7 +12,7 @@ async function main() {
   const S = (key: string, value: object | string | number) => prisma.setting.create({ data: { key, value } });
   await S('site', { name: 'S Learning', tagline: 'Learn new skills. Unlock new opportunities.', support_email: 'support@example.com', phone: '+233 00 000 0000',
     address: 'Your business address, City, Country', hours: 'Mon-Fri, 8am-5pm GMT', whatsapp_url: 'https://whatsapp.com/channel/REPLACE_ME',
-    video_url: '', video_poster: '', logo_url: '', stat_learners: '10,000+', stat_courses: '50+', stat_countries: '2' });
+    video_url: '', video_poster: '', logo_url: '', stat_learners: '', stat_courses: '', stat_countries: '' });
   // PRICES are placeholders in minor units (5000 = GHS 50.00 / NGN 50.00). Edit them in the CMS > Settings.
   await S('activation_fee', { GH: 5000, NG: 500000 });
   await S('referral_reward', { GH: 1000, NG: 100000 });
@@ -22,7 +22,7 @@ async function main() {
   await S('withdrawal_fee_percent', 1.5);
   await S('payout_methods', { GH: ['MTN Mobile Money', 'Telecel Cash', 'AirtelTigo Money', 'Bank transfer'], NG: ['Bank transfer'] });
   await S('task_deadline_hours', 72);
-  await S('reviews', [1, 2, 3].map(i => ({ name: 'Learner ' + i, country: i % 2 ? 'GH' : 'NG', rating: 5, text: 'Replace with a genuine learner review.' })));
+  await S('reviews', []);
 
   const cats = ['Cooking and Food', 'Business and Money', 'Technology', 'Health and Wellness', 'Farming', 'Languages'];
   const created = [];

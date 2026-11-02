@@ -36,6 +36,9 @@ The first upload creates two buckets if they do not exist: `public-media` (publi
 
 To move existing files from `uploads/public` and `uploads/private` and update matching database URLs, run `npm run storage:migrate`. It is safe to re-run and leaves the local files untouched. It stops without changing database URLs if any database image reference has no matching local file; restore that file and run the command again. Private PDFs larger than 50 MiB need a higher allowed upload limit in the Supabase project and bucket before migration. New CMS images, avatars, PDFs, and imported eBook files go directly to Supabase Storage.
 
+## Google sign-in
+Set the public Supabase anon/publishable key as `SUPABASE_ANON_KEY` or `SUPABASE_PUBLISHABLE_KEY` in the local and production environments before building. The app can reuse the existing server-side `SUPABASE_URL`; set `NEXT_PUBLIC_SUPABASE_URL` only if you want to override it. The Next.js config exposes only the Supabase URL and public anon/publishable key to browser code. Never use or expose `SUPABASE_SERVICE_ROLE_KEY` for sign-in. Enable Google under **Supabase Dashboard > Authentication > Providers**, then add your app callback (for local development, `http://localhost:3000/auth/google/callback`) to Supabase's allowed redirect URLs. Configure the Google OAuth client with the callback URL shown in the Supabase Google provider settings (`https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`). New students finish signup by providing their country and WhatsApp number; existing student accounts can sign in using the same verified Google email.
+
 ## Payments (Paystack, GHS + NGN)
 1. Put your secret key in `PAYSTACK_SECRET_KEY`. Webhook URL in Paystack: `https://YOUR_DOMAIN/api/v1/webhooks/paystack`.
 2. For payouts: fund your Paystack balance and turn **off** "Confirm transfers before sending" in Paystack settings (otherwise transfers wait for an OTP).

@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { api, errMsg, type CourseItem, type LearningStats, type UpcomingLearning } from '@/lib/api';
 import { useRequireAuth } from './Providers';
 import { CourseCard, courseCover, Img } from './bits';
@@ -30,7 +31,9 @@ function EnrolledCourse({ course }: { course: CourseItem }) {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const { me } = useRequireAuth(), [mine, setMine] = useState<CourseItem[]>([]), [pop, setPop] = useState<CourseItem[]>([]), [stats, setStats] = useState<LearningStats | null>(null), [upcoming, setUpcoming] = useState<UpcomingLearning[]>([]), [upcomingError, setUpcomingError] = useState(''), [upcomingLoading, setUpcomingLoading] = useState(true);
+  useEffect(() => { if (me && !me.email_verified) router.replace('/verify?sent=1'); }, [me, router]);
   useEffect(() => {
     if (me) {
       api<CourseItem[]>('/me/courses').then(setMine).catch(() => {});

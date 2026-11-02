@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api, errMsg } from '@/lib/api';
 import { useAuth } from './Providers';
+import GoogleSignInButton from './GoogleSignInButton';
 
 const COUNTRIES = [
   { code: 'GH', name: 'Ghana', dialCode: '+233' },
@@ -25,6 +26,7 @@ export function LoginForm() {
     <label>Password<input {...f.bind('password')} type={show ? 'text' : 'password'} required autoComplete="current-password" /></label>
     <label className="row" style={{ fontWeight: 400 }}><input type="checkbox" checked={show} onChange={e => setShow(e.target.checked)} style={{ width: 'auto', minHeight: 0 }} /> Show password</label>
     <p className="err" role="alert">{f.err}</p><button className="btn primary block" disabled={f.busy}>Log in</button>
+    <GoogleSignInButton />
     <p className="muted"><Link href="/forgot">Forgot password?</Link> · New here? <Link href="/signup">Sign up</Link></p></form></Shell>;
 }
 
@@ -32,7 +34,7 @@ export function SignupForm() {
   const sp = useSearchParams(), f = useForm({ username: '', full_name: '', email: '', country: 'GH', phone: '', referrer_id: sp.get('ref') || '', password: '', confirm_password: '' }), { refresh } = useAuth(), router = useRouter();
   return <Shell><form className="card formcard" onSubmit={f.submit(async v => {
     let p = v.phone.replace(/[\s-]/g, ''); if (!p.startsWith('+')) p = DIAL[v.country] + p.replace(/^0/, '');
-    await api('/auth/register', { body: { ...v, phone: p } }); await refresh(); router.push('/dashboard'); })}>
+    await api('/auth/register', { body: { ...v, phone: p } }); await refresh(); router.push('/verify?sent=1'); })}>
     <h2>Create your account</h2>
     <label>Username<input {...f.bind('username')} required autoComplete="username" pattern="[A-Za-z0-9_]{3,20}" title="3-20 letters, numbers or underscores" /></label>
     <label>Full name<input {...f.bind('full_name')} required autoComplete="name" /></label>
@@ -43,6 +45,7 @@ export function SignupForm() {
     <label>Password<input {...f.bind('password')} type="password" required minLength={8} autoComplete="new-password" /><small className="muted">At least 8 characters, with a letter and a number.</small></label>
     <label>Confirm password<input {...f.bind('confirm_password')} type="password" required autoComplete="new-password" /></label>
     <p className="err" role="alert">{f.err}</p><button className="btn primary block" disabled={f.busy} aria-busy={f.busy}>{f.busy ? 'Creating account…' : 'Create account'}</button>
+    <GoogleSignInButton label="Sign up with Google" />
     <p className="muted">Already a member? <Link href="/login">Log in</Link></p></form></Shell>;
 }
 
@@ -61,7 +64,8 @@ export function ResetForm() {
 }
 
 export function VerifyEmail() {
-  const token = useSearchParams().get('token'), { refresh } = useAuth(), [state, setState] = useState<'wait' | 'ok' | string>('wait');
-  useEffect(() => { api('/auth/verify', { body: { token } }).then(() => { setState('ok'); void refresh(); }).catch(e => setState(errMsg(e))); }, [token, refresh]);
-  return <Shell><div className="card formcard">{state === 'wait' ? <p>Verifying…</p> : state === 'ok' ? <><h2>Email verified</h2><p>Thanks. Your email address is confirmed.</p><Link className="btn primary" href="/dashboard">Continue</Link></> : <><h2>Link problem</h2><p className="err">{state}</p><Link className="btn" href="/dashboard">Go to dashboard</Link></>}</div></Shell>;
+  const token = useSearchParams().get('token'), sent = useSearchParams().get('sent'), { refresh } = useAuth(), [state, setState] = useState<'wait' | 'ok' | string>('wait'), [busy, setBusy] = useState(false);
+  useEffect(() => { if (!token) { setState(sent ? 'sent' : 'wait'); return; } api('/auth/verify', { body: { token } }).then(() => { setState('ok'); void refresh(); }).catch(e => setState(errMsg(e))); }, [token, sent, refresh]);
+  const resend = async () => { setBusy(true); try { await api('/auth/resend', { method: 'POST' }); setState('resent'); } catch (e) { setState(errMsg(e)); } setBusy(false); };
+  return <Shell><div className="card formcard">{state === 'wait' ? <p>Verifying…</p> : state === 'sent' || state === 'resent' ? <><h2>Check your email</h2><p>We sent a verification link to your email address. Open it to verify your account.</p><button className="btn primary" disabled={busy} onClick={resend}>{busy ? 'Sending…' : 'Resend verification email'}</button><p className="muted" style={{ marginTop: '1rem' }}><Link href="/dashboard">Continue to dashboard</Link></p></> : state === 'ok' ? <><h2>Email verified</h2><p>Thanks. Your email address is confirmed.</p><Link className="btn primary" href="/dashboard">Continue</Link></> : <><h2>Link problem</h2><p className="err">{state}</p><Link className="btn" href="/dashboard">Go to dashboard</Link></>}</div></Shell>;
 }

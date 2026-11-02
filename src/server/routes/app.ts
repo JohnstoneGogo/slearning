@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import type { Prisma, User } from '@prisma/client';
 import { prisma } from '../db';
@@ -99,6 +100,132 @@ const RegisterSchema = z.object({
   confirm_password: z.string(),
   referrer_id: z.string().optional(),
 }).refine(d => d.password === d.confirm_password, { message: 'Passwords do not match.', path: ['confirm_password'] });
+
+const GoogleAuthSchema = z.object({
+  access_token: z.string().min(20).max(4096),
+  country: z.enum(['GH', 'NG']).optional(),
+  phone: z.string().regex(/^\+?\d{8,15}$/, 'Enter a valid WhatsApp number with country code.').optional(),
+  full_name: z.string().trim().min(3).max(100).optional(),
+  referrer_id: z.string().trim().max(64).optional(),
+});
+
+function googleAvatar(userMetadata: Record<string, unknown>) {
+  const raw = userMetadata.avatar_url ?? userMetadata.picture;
+  if (typeof raw !== 'string') return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function newGoogleUsername(email: string): Promise<string> {
+  const prefix = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 14);
+  const base = prefix.length >= 3 ? prefix : 'student';
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const username = `${base}_${crypto.randomInt(1000, 100000)}`;
+    if (!await prisma.user.findUnique({ where: { username } })) return username;
+  }
+  return fail(503, 'Could not create a username. Please try again.');
+}
+
+pub('POST', '/auth/google', async c => {
+  await limit('google-auth:' + c.ip, 12, 15 * 60e3);
+  const parsed = GoogleAuthSchema.safeParse(await c.json());
+  if (!parsed.success) fail(400, parsed.error.issues[0].message);
+  const body = parsed.data!;
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+    || process.env.SUPABASE_ANON_KEY
+    || process.env.SUPABASE_PUBLISHABLE_KEY;
+  if (!supabaseUrl || !supabaseAnonKey)
+    fail(503, 'Google sign-in is not configured. Set the Supabase URL and anon key.');
+
+  const supabase = createClient(supabaseUrl!, supabaseAnonKey!, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+  const { data: authData, error: authError } = await supabase.auth.getUser(body.access_token);
+  if (authError || !authData.user)
+    fail(401, 'Google sign-in could not be verified. Please try again.');
+  const googleUser = authData.user!;
+  if (!googleUser.email || !googleUser.email_confirmed_at)
+    fail(401, 'Google sign-in could not be verified. Please try again.');
+  if (googleUser.app_metadata.provider !== 'google' && !googleUser.identities?.some(identity => identity.provider === 'google'))
+    fail(403, 'Please sign in with Google.');
+
+  const email = googleUser.email!.trim().toLowerCase();
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    if (existing.suspended) fail(403, 'This account is suspended. Contact support.');
+    if (existing.role !== 'member') fail(403, 'Google sign-in is only available for student accounts.');
+    const user = await prisma.user.update({
+      where: { id: existing.id },
+      data: { emailVerified: true, ...(existing.avatarUrl ? {} : { avatarUrl: googleAvatar(googleUser.user_metadata) }) },
+    });
+    return session(user);
+  }
+
+  if (!body.country && !body.phone && !body.full_name) {
+    const metadata = googleUser.user_metadata;
+    const name = [metadata.full_name, metadata.name].find(value => typeof value === 'string' && value.trim().length >= 3);
+    return new Res({
+      needs_profile: true,
+      email,
+      full_name: typeof name === 'string' ? name.trim().slice(0, 100) : '',
+      avatar_url: googleAvatar(metadata),
+    });
+  }
+  if (!body.country || !body.phone || !body.full_name)
+    fail(400, 'Enter your name, country, and WhatsApp number to finish signup.');
+  const country = body.country!;
+  const phone = body.phone!;
+  const fullName = body.full_name!;
+
+  let referrerId: number | null = null;
+  if (body.referrer_id) {
+    const referrer = await prisma.user.findFirst({
+      where: { memberId: { equals: body.referrer_id!, mode: 'insensitive' }, role: 'member', suspended: false },
+    });
+    if (!referrer) fail(400, 'That referrer ID was not found.');
+    referrerId = referrer!.id;
+  }
+
+  let memberId: string;
+  do { memberId = 'SL' + crypto.randomInt(1e6, 1e7); } while (await prisma.user.findUnique({ where: { memberId } }));
+  const metadata = googleUser.user_metadata;
+  let user: User;
+  try {
+    user = await prisma.user.create({
+      data: {
+        memberId,
+        username: await newGoogleUsername(email),
+        email,
+        fullName,
+        country,
+        phone: phone.replace(/[\s-]/g, ''),
+        referrerId,
+        passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS),
+        emailVerified: true,
+        avatarUrl: googleAvatar(metadata),
+        deadlineAt: new Date(Date.now() + (await cfg<number>('task_deadline_hours')) * 3600e3),
+      },
+    });
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
+      const raced = await prisma.user.findUnique({ where: { email } });
+      if (raced) {
+        if (raced.suspended) fail(403, 'This account is suspended. Contact support.');
+        if (raced.role !== 'member') fail(403, 'Google sign-in is only available for student accounts.');
+        return session(await prisma.user.update({ where: { id: raced.id }, data: { emailVerified: true } }));
+      }
+    }
+    throw error;
+  }
+  await notify(prisma, user.id, 'Welcome', 'Your student account is ready. Complete activation to access your learning account.', '/activate');
+  return session(user, 201);
+});
 
 pub('POST', '/auth/register', async c => {
   await limit('reg:' + c.ip, 10, 3600e3);

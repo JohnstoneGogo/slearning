@@ -7,12 +7,29 @@ const corsOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const supabaseConnectSource = (() => {
+  try {
+    const url = new URL(supabaseUrl);
+    return url.protocol === 'https:' ? url.origin : '';
+  } catch {
+    return '';
+  }
+})();
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
   poweredByHeader: false,
   reactStrictMode: true,
   serverExternalPackages: ['sharp', 'bcryptjs', 'pg'],
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '',
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+      || process.env.SUPABASE_ANON_KEY
+      || process.env.SUPABASE_PUBLISHABLE_KEY
+      || '',
+  },
 
   async headers() {
     // C-01: CORS — only allow listed origins; fall back to same-origin in production
@@ -45,9 +62,10 @@ const nextConfig: NextConfig = {
           "default-src 'self'",
           `script-src 'self' 'unsafe-inline'${PROD ? '' : " 'unsafe-eval'"}`, // Next.js dev refresh requires eval; never permit it in production
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-          "img-src 'self' data: blob: https:",
-          "font-src 'self' https://fonts.gstatic.com",
-          `connect-src 'self' https://api.paystack.co${PROD ? '' : ' ws://127.0.0.1:* ws://localhost:*'}`,
+           "img-src 'self' data: blob: https:",
+           "font-src 'self' https://fonts.gstatic.com",
+           "manifest-src 'self'",
+          `connect-src 'self' https://api.paystack.co${supabaseConnectSource ? ` ${supabaseConnectSource}` : ''}${PROD ? '' : ' ws://127.0.0.1:* ws://localhost:*'}`,
           "frame-src 'self' https://*.supabase.co",
           "object-src 'none'",
           "base-uri 'self'",

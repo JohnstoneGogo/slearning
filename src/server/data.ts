@@ -9,6 +9,8 @@ export const getConfig = () => cached('config', 60, async () => ({
   countries: await Promise.all(Object.keys(CUR).map(async c => ({ code: c, currency: CUR[c], activation_fee: (await cfg<Record<string, number>>('activation_fee'))[c] })))
 }));
 export const getFacts = () => cached('facts', 60, () => prisma.fact.findMany({ where: { active: true }, orderBy: { id: 'asc' } }));
+export const getRegisteredLearnerCount = () => cached('home:registered_learners', 60, () =>
+  prisma.user.count({ where: { role: 'member', suspended: false } }));
 export const getCategories = () => cached('cats', 60, async () =>
   (await prisma.category.findMany({ orderBy: [{ sort: 'asc' }, { id: 'asc' }], include: { _count: { select: { courses: { where: { published: true } } } } } })).map(({ _count, ...c }) => ({ ...c, count: _count.courses })));
 export const getPage = async (slug: string) => { const p = await prisma.page.findUnique({ where: { slug } }); return p || fail(404, 'Page not found.'); };
