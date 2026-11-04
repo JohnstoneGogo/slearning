@@ -227,7 +227,7 @@ export default function SectionLearningWindow({
       });
       setFeedback(response.feedback);
       setSelectedAnswer(null);
-      if (finish) {
+      if (response.score !== undefined) {
         const result = {
           score: response.score ?? 0,
           total: response.total ?? quiz.questions.length,

@@ -505,14 +505,15 @@ async function loadPdfSection(lessonId: number, sectionId: number) {
       pdfOutline: true, outlineStatus: true, course: { select: { published: true } },
     },
   });
-  if (!lesson || lesson.kind !== 'pdf' || !lesson.course.published) fail(404, 'PDF lesson not found.');
-  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
-  if (!outline) fail(404, 'PDF outline is not available.');
-  const index = outline.flat.findIndex(section => section.id === sectionId);
+  const pdfLesson = lesson ?? fail(404, 'PDF lesson not found.');
+  if (pdfLesson.kind !== 'pdf' || !pdfLesson.course.published) fail(404, 'PDF lesson not found.');
+  const outline = pdfLesson.outlineStatus === 'ready' ? readPdfOutline(pdfLesson.pdfOutline) : null;
+  const pdfOutline = outline ?? fail(404, 'PDF outline is not available.');
+  const index = pdfOutline.flat.findIndex(section => section.id === sectionId);
   if (index < 0) fail(404, 'PDF section not found.');
-  const section = outline.flat[index];
+  const section = pdfOutline.flat[index];
   if (!section.start_page || !section.end_page) fail(404, 'PDF section has no page range.');
-  return { lesson, outline, section, index };
+  return { lesson: pdfLesson, outline: pdfOutline, section, index };
 }
 
 async function requireSectionAccess(userId: number, lesson: { courseId: number; preview: boolean }) {
@@ -546,19 +547,20 @@ member('GET', '/lessons/:id/sections/progress', async ({ user, params }) => {
     where: { id: lessonId },
     select: { id: true, courseId: true, kind: true, preview: true, pdfOutline: true, outlineStatus: true, course: { select: { published: true } } },
   });
-  if (!lesson || lesson.kind !== 'pdf' || !lesson.course.published) fail(404, 'PDF lesson not found.');
-  await requireSectionAccess(user.id, lesson);
-  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
-  if (!outline) fail(404, 'PDF outline is not available.');
+  const pdfLesson = lesson ?? fail(404, 'PDF lesson not found.');
+  if (pdfLesson.kind !== 'pdf' || !pdfLesson.course.published) fail(404, 'PDF lesson not found.');
+  await requireSectionAccess(user.id, pdfLesson);
+  const outline = pdfLesson.outlineStatus === 'ready' ? readPdfOutline(pdfLesson.pdfOutline) : null;
+  const pdfOutline = outline ?? fail(404, 'PDF outline is not available.');
   const progress = await prisma.sectionProgress.findMany({
     where: { userId: user.id, lessonId },
     select: { sectionId: true, lastPageViewed: true, bestScore: true, attempts: true, completedAt: true },
   });
   const bySection = new Map(progress.map(row => [row.sectionId, row]));
   return {
-    sections: outline.flat.map((section, index) => {
+    sections: pdfOutline.flat.map((section, index) => {
       const current = bySection.get(section.id);
-      const previous = index > 0 ? bySection.get(outline.flat[index - 1].id) : undefined;
+      const previous = index > 0 ? bySection.get(pdfOutline.flat[index - 1].id) : undefined;
       return {
         section_id: section.id,
         unlocked: isSectionUnlocked(index, Boolean(current?.completedAt), Boolean(previous?.completedAt)),
@@ -599,11 +601,12 @@ pub('GET', '/lessons/:id/sections/:sectionId/pages/:page', async ({ params, req 
   }
 
   const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
-  const section = outline?.flat.find(item => item.id === sectionId);
-  if (!section) fail(404, 'PDF section not found.');
-  const sectionIndex = outline!.flat.findIndex(item => item.id === sectionId);
-  if (user) await requirePreviousSectionComplete(user.id, lesson.id, outline!.flat, sectionIndex);
-  if (!canReadSectionPage(lesson.preview, enrolled, pageNumber, section!.start_page ?? 0, section!.end_page ?? 0)) {
+  const pdfOutline = outline ?? fail(404, 'PDF section not found.');
+  const section = pdfOutline.flat.find(item => item.id === sectionId)
+    ?? fail(404, 'PDF section not found.');
+  const sectionIndex = pdfOutline.flat.findIndex(item => item.id === sectionId);
+  if (user) await requirePreviousSectionComplete(user.id, lesson.id, pdfOutline.flat, sectionIndex);
+  if (!canReadSectionPage(lesson.preview, enrolled, pageNumber, section.start_page ?? 0, section.end_page ?? 0)) {
     fail(lesson.preview || enrolled ? 416 : 403, lesson.preview || enrolled
       ? 'Requested page is outside this section.'
       : 'Enroll in this course to read this section.');
@@ -711,7 +714,7 @@ member('POST', '/lessons/:id/sections/:sectionId/quiz/answer', async ({ user, pa
   if (!Number.isSafeInteger(currentQuestionId) || !Number.isSafeInteger(selectedIndex)) {
     fail(400, 'Invalid quiz answer.');
   }
-  if (!progress) fail(409, 'Open the knowledge check after reaching the final page.');
+  const sectionProgress = progress ?? fail(409, 'Open the knowledge check after reaching the final page.');
 
   const questions = await prisma.quizQuestion.findMany({
     where: { sectionLessonId: lessonId, sectionId, status: 'approved' },
@@ -719,15 +722,15 @@ member('POST', '/lessons/:id/sections/:sectionId/quiz/answer', async ({ user, pa
     select: { id: true, prompt: true, options: true, answerIndex: true, explanation: true },
   });
   if (!questions.length) fail(409, 'No approved questions are available for this section yet.');
-  const questionIndex = progress.quizQuestionIndex;
+  const questionIndex = sectionProgress.quizQuestionIndex;
   const current = questions[questionIndex];
   if (!current || current.id !== currentQuestionId) fail(409, 'This quiz answer is out of sequence. Reload the quiz and try again.');
   if (selectedIndex < 0 || !Array.isArray(current.options) || selectedIndex >= current.options.length) {
     fail(400, 'Select a valid answer.');
   }
   const previousAnswers: { questionId: number; answerIndex: number }[] = [];
-  if (Array.isArray(progress.quizAnswers)) {
-    for (const value of progress.quizAnswers) {
+  if (Array.isArray(sectionProgress.quizAnswers)) {
+    for (const value of sectionProgress.quizAnswers) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) fail(500, 'Saved quiz progress is invalid.');
       const saved = value as Record<string, unknown>;
       if (!Number.isSafeInteger(saved.questionId) || !Number.isSafeInteger(saved.answerIndex)) {

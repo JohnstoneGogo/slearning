@@ -468,8 +468,9 @@ async function validateSectionQuestionTarget(lessonId: number, sectionId: number
     where: { id: lessonId },
     select: { kind: true, pdfOutline: true, outlineStatus: true },
   });
-  if (!lesson || lesson.kind !== 'pdf') fail(404, 'PDF lesson not found.');
-  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
+  const pdfLesson = lesson ?? fail(404, 'PDF lesson not found.');
+  if (pdfLesson.kind !== 'pdf') fail(404, 'PDF lesson not found.');
+  const outline = pdfLesson.outlineStatus === 'ready' ? readPdfOutline(pdfLesson.pdfOutline) : null;
   if (!outline?.flat.some(section => section.id === sectionId)) fail(404, 'PDF section not found.');
 }
 
@@ -512,18 +513,19 @@ admin('PUT', '/admin/section-questions/:id', async c => {
   const id = Number(c.params.id);
   if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid question ID.');
   const question = await prisma.quizQuestion.findUnique({ where: { id } });
-  if (!question || question.quizId !== null || !question.sectionLessonId || !question.sectionId) {
+  const sectionQuestion = question ?? fail(404, 'Section question not found.');
+  if (sectionQuestion.quizId !== null || !sectionQuestion.sectionLessonId || !sectionQuestion.sectionId) {
     fail(404, 'Section question not found.');
   }
   const body = await c.json() as Record<string, unknown>;
   const fields = sectionQuestionFields({
-    prompt: body.prompt ?? question.prompt,
-    options: body.options ?? question.options,
-    answer_index: body.answer_index ?? question.answerIndex,
-    explanation: body.explanation ?? question.explanation,
-    sort: body.sort ?? question.sort,
+    prompt: body.prompt ?? sectionQuestion.prompt,
+    options: body.options ?? sectionQuestion.options,
+    answer_index: body.answer_index ?? sectionQuestion.answerIndex,
+    explanation: body.explanation ?? sectionQuestion.explanation,
+    sort: body.sort ?? sectionQuestion.sort,
   });
-  const status = body.status === undefined ? question.status : String(body.status);
+  const status = body.status === undefined ? sectionQuestion.status : String(body.status);
   if (status !== 'draft' && status !== 'approved') fail(400, 'Status must be draft or approved.');
   const updated = await prisma.quizQuestion.update({
     where: { id },
