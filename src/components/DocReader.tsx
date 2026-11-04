@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { headingCount, outlineOf, parseDoc } from "@/lib/outline";
+import { PdfOutlineView } from "@/components/PdfOutlineView";
+import type { PdfOutlineData } from "@/lib/pdf-outline";
 
 /**
  * Document reader for a lesson note.
@@ -13,17 +15,27 @@ export default function DocReader({
   text,
   title,
   pdfUrl,
+  pdfOutline,
+  lessonId,
+  isPdfLesson = false,
 }: {
   text: string;
   title: string;
   pdfUrl?: string | null;
+  pdfOutline?: PdfOutlineData | null;
+  lessonId?: number;
+  isPdfLesson?: boolean;
 }) {
   const blocks = useMemo(() => parseDoc(text), [text]);
   const topics = useMemo(() => outlineOf(blocks), [blocks]);
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState<string>("");
   const [showPdf, setShowPdf] = useState(false);
-  const hasOutline = topics.length > 0 && headingCount(blocks) > 1;
+  const [pdfPage, setPdfPage] = useState<number | null>(null);
+  const pdfSections = pdfOutline?.flat ?? [];
+  const hasOutline = isPdfLesson
+    ? Boolean(lessonId && pdfSections.length)
+    : topics.length > 0 && headingCount(blocks) > 1;
 
   const go = (id: string) => {
     const el = scroller.current?.querySelector(
@@ -54,7 +66,7 @@ export default function DocReader({
     return () => io.disconnect();
   }, [hasOutline, blocks]);
 
-  if (!blocks.length && !pdfUrl)
+  if (!blocks.length && !pdfUrl && !(isPdfLesson && hasOutline))
     return <p className="muted">This note is empty.</p>;
 
   return (
@@ -62,13 +74,21 @@ export default function DocReader({
       <div
         className={`doc-shell ${hasOutline && !showPdf ? "has-outline" : ""}`}
       >
-        {showPdf && pdfUrl ? (
+        {showPdf && pdfUrl && !isPdfLesson ? (
           <div style={{ width: "100%" }}>
-            <iframe className="pdf" src={pdfUrl} title={title} />
+            <iframe
+              key={pdfPage ?? "first-page"}
+              className="pdf"
+              src={pdfPage ? `${pdfUrl}#page=${pdfPage}` : pdfUrl}
+              title={title}
+            />
           </div>
         ) : (
           <div className="doc-scroll" ref={scroller}>
             <article className="doc" aria-label={title}>
+              {!blocks.length && isPdfLesson && (
+                <p className="muted">Choose a section to read its pages.</p>
+              )}
               {blocks.map((b, i) => {
                 if (b.type === "h1")
                   return (
@@ -97,7 +117,7 @@ export default function DocReader({
                 return <p key={i}>{b.text}</p>;
               })}
             </article>
-            {pdfUrl && (
+            {pdfUrl && !isPdfLesson && (
               <p className="doc-src muted">
                 Converted from the uploaded document.
               </p>
@@ -105,37 +125,47 @@ export default function DocReader({
           </div>
         )}
 
-        {hasOutline && !showPdf && (
-          <nav className="doc-outline" aria-label="Document outline">
-            <b className="doc-outline-head">Topics</b>
-            {topics.map((t) => (
-              <div key={t.id} className="doc-outline-group">
-                <a
-                  href={`#${t.id}`}
-                  className={`doc-t ${active === t.id ? "on" : ""}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    go(t.id);
-                  }}
-                >
-                  {t.text}
-                </a>
-                {t.children.map((s) => (
-                  <a
-                    key={s.id}
-                    href={`#${s.id}`}
-                    className={`doc-s ${active === s.id ? "on" : ""}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      go(s.id);
-                    }}
-                  >
-                    {s.text}
-                  </a>
+        {hasOutline && (!showPdf || isPdfLesson) && (
+          isPdfLesson && pdfOutline ? (
+            <PdfOutlineView
+              outline={pdfOutline}
+              lessonId={lessonId}
+              activeId={active}
+            />
+          ) : !isPdfLesson ? (
+            <nav className="doc-outline" aria-label="Document outline">
+              <>
+                <b className="doc-outline-head">Topics</b>
+                {topics.map((t) => (
+                  <div key={t.id} className="doc-outline-group">
+                    <a
+                      href={`#${t.id}`}
+                      className={`doc-t ${active === t.id ? "on" : ""}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        go(t.id);
+                      }}
+                    >
+                      {t.text}
+                    </a>
+                    {t.children.map((s) => (
+                      <a
+                        key={s.id}
+                        href={`#${s.id}`}
+                        className={`doc-s ${active === s.id ? "on" : ""}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          go(s.id);
+                        }}
+                      >
+                        {s.text}
+                      </a>
+                    ))}
+                  </div>
                 ))}
-              </div>
-            ))}
-          </nav>
+              </>
+            </nav>
+          ) : null
         )}
       </div>
 

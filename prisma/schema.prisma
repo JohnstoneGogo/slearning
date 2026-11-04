@@ -44,6 +44,7 @@ model User {
   quizAttempts  QuizAttempt[]
   posts         DiscussionPost[]
   support       SupportRequest[]
+  sectionProgress SectionProgress[]
 }
 
 model Token {
@@ -111,14 +112,36 @@ model Lesson {
   kind      String           @default("text") // text | video | pdf | quiz
   content   String?
   url       String? // video URL, or "private:<file>" for uploaded PDFs
+  pdfOutline Json?
+  outlineStatus String       @default("pending") // pending | ready | failed
+  outlineRequestedAt DateTime? @default(now())
   minutes   Int              @default(10)
   preview   Boolean          @default(false)
   sort      Int              @default(0)
   progress  LessonProgress[]
   resources LessonResource[]
   quiz      Quiz?
+  sectionProgress SectionProgress[]
+  sectionQuestions QuizQuestion[] @relation("SectionQuizQuestions")
 
   @@index([courseId, sort])
+}
+
+model SectionProgress {
+  userId      Int
+  lessonId    Int
+  sectionId   Int
+  lastPageViewed Int?
+  bestScore   Int      @default(0)
+  attempts    Int      @default(0)
+  quizQuestionIndex Int @default(0)
+  quizAnswers Json?
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completedAt DateTime?
+
+  @@id([userId, lessonId, sectionId])
+  @@index([lessonId, sectionId])
 }
 
 // Downloadable attachments (PDF worksheets, slide decks, templates) attached to a lesson.
@@ -152,16 +175,21 @@ model Quiz {
 }
 
 model QuizQuestion {
-  id          Int      @id @default(autoincrement())
-  quizId      Int
-  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  prompt      String
-  options     Json     @default("[]") // array of answer strings
-  answerIndex Int      @default(0)
-  explanation String?
-  sort        Int      @default(0)
+  id              Int      @id @default(autoincrement())
+  quizId          Int?
+  quiz            Quiz?    @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  sectionLessonId Int?
+  sectionLesson   Lesson?  @relation("SectionQuizQuestions", fields: [sectionLessonId], references: [id], onDelete: Cascade)
+  sectionId       Int?
+  status          String   @default("approved") // draft | approved
+  prompt          String
+  options         Json     @default("[]") // array of answer strings
+  answerIndex     Int      @default(0)
+  explanation     String?
+  sort            Int      @default(0)
 
   @@index([quizId, sort])
+  @@index([sectionLessonId, sectionId, status, sort])
 }
 
 model QuizAttempt {

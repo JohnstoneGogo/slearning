@@ -1,7 +1,7 @@
 // CMS / admin API (role "admin"). The /admin web app, and any future mobile admin, use these same endpoints.
 import crypto from 'node:crypto';
 import { revalidatePath } from 'next/cache';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { audit, balances, camelKey, clearCache, fail, move } from '../core';
 import { admin } from '../router';
@@ -9,6 +9,7 @@ import { confirmPayment, dispatchPayout, finishWithdrawal } from '../payments';
 import { provider } from '../providers';
 import { rate } from '../data';
 import { uploadPrivatePdf, uploadPublicFile } from '../storage';
+import { readPdfOutline } from '../../lib/pdf-outline';
 
 const touch = () => { clearCache(); try { revalidatePath('/', 'layout'); } catch { /* outside a request */ } };
 
@@ -269,10 +270,25 @@ admin('PUT', '/admin/settings/:key', async c => {
 });
 admin('GET', '/admin/content/:t', async ({ params, query }) => {
   const { model } = shape(params.t, {}), cid = query.get('course_id');
-  return model.findMany({ where: cid ? { courseId: +cid } : {}, orderBy: params.t === 'lessons' ? [{ sort: 'asc' }, { id: 'asc' }] : { id: 'desc' } });
+  return model.findMany({
+    where: cid ? { courseId: +cid } : {},
+    orderBy: params.t === 'lessons' ? [{ sort: 'asc' }, { id: 'asc' }] : { id: 'desc' },
+    ...(params.t === 'lessons' ? {
+      select: {
+        id: true, courseId: true, title: true, kind: true, content: true, url: true,
+        minutes: true, preview: true, sort: true, outlineStatus: true, outlineRequestedAt: true,
+      },
+    } : {}),
+  });
 });
 admin('POST', '/admin/content/:t', async c => {
   const { model, data } = shape(c.params.t, await c.json() as Record<string, unknown>);
+  if (c.params.t === 'lessons' && data.kind === 'pdf' &&
+      typeof data.url === 'string' && data.url.startsWith('private:')) {
+    data.pdfOutline = Prisma.DbNull;
+    data.outlineStatus = 'pending';
+    data.outlineRequestedAt = new Date();
+  }
   const row = await model.create({ data });
   await audit(c.user.id, `content_create_${c.params.t}`, { id: row.id });
   touch();
@@ -282,10 +298,34 @@ admin('PUT', '/admin/content/:t/:id', async c => {
   const id = Number(c.params.id);
   if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid content ID.');
   const { model, data } = shape(c.params.t, await c.json() as Record<string, unknown>);
+  if (c.params.t === 'lessons') {
+    const existing = await prisma.lesson.findUnique({ where: { id }, select: { kind: true, url: true } });
+    if (!existing) fail(404, 'Lesson not found.');
+    const nextKind = data.kind !== undefined ? data.kind : existing!.kind;
+    const nextUrl = data.url !== undefined ? data.url : existing!.url;
+    if (nextKind === 'pdf' && (existing!.kind !== 'pdf' || nextUrl !== existing!.url)) {
+      data.pdfOutline = Prisma.DbNull;
+      data.outlineStatus = 'pending';
+      data.outlineRequestedAt = new Date();
+    }
+  }
   if (Object.keys(data).length) await model.update({ where: { id }, data });
   await audit(c.user.id, `content_update_${c.params.t}`, { id });
   touch();
   return { ok: true };
+});
+admin('POST', '/admin/content/lessons/:id/reanalyze', async c => {
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid lesson ID.');
+  const lesson = await prisma.lesson.findUnique({ where: { id }, select: { kind: true } });
+  if (!lesson || lesson.kind !== 'pdf') fail(404, 'PDF lesson not found.');
+  await prisma.lesson.update({
+    where: { id },
+    data: { pdfOutline: Prisma.DbNull, outlineStatus: 'pending', outlineRequestedAt: new Date() },
+  });
+  await audit(c.user.id, 'pdf_outline_reanalyze', { lessonId: id });
+  touch();
+  return { status: 'pending' };
 });
 admin('DELETE', '/admin/content/:t/:id', async c => {
   const id = Number(c.params.id);
@@ -400,6 +440,109 @@ admin('GET', '/admin/quizzes/:id/questions', async c => {
   const quiz = await prisma.quiz.findUnique({ where: { id: +c.params.id }, include: { questions: { orderBy: [{ sort: 'asc' }, { id: 'asc' }] } } });
   if (!quiz) fail(404, 'Quiz not found.');
   return quiz!.questions;
+});
+
+function sectionQuestionFields(body: Record<string, unknown>) {
+  const prompt = String(body.prompt ?? '').trim();
+  const options = Array.isArray(body.options)
+    ? body.options.map(option => String(option ?? '').trim())
+    : [];
+  const answerIndex = Number(body.answer_index);
+  const explanation = String(body.explanation ?? '').trim();
+  const sort = Number(body.sort ?? 0);
+  if (prompt.length < 5 || prompt.length > 2000) fail(400, 'Question text must be 5–2000 characters.');
+  if (options.length < 2 || options.length > 6 ||
+      options.some(option => !option || option.length > 300)) {
+    fail(400, 'Provide 2–6 answer options, each no longer than 300 characters.');
+  }
+  if (!Number.isSafeInteger(answerIndex) || answerIndex < 0 || answerIndex >= options.length) {
+    fail(400, 'Select a valid correct answer.');
+  }
+  if (explanation.length > 2000) fail(400, 'Explanation must be no longer than 2000 characters.');
+  if (!Number.isSafeInteger(sort) || sort < 0) fail(400, 'Sort order must be a non-negative integer.');
+  return { prompt, options, answerIndex, explanation: explanation || null, sort };
+}
+
+async function validateSectionQuestionTarget(lessonId: number, sectionId: number) {
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    select: { kind: true, pdfOutline: true, outlineStatus: true },
+  });
+  if (!lesson || lesson.kind !== 'pdf') fail(404, 'PDF lesson not found.');
+  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
+  if (!outline?.flat.some(section => section.id === sectionId)) fail(404, 'PDF section not found.');
+}
+
+admin('GET', '/admin/section-questions', async ({ query }) => {
+  const lessonId = Number(query.get('lesson_id'));
+  const sectionId = Number(query.get('section_id'));
+  if (![lessonId, sectionId].every(Number.isSafeInteger) || lessonId < 1 || sectionId < 1) {
+    fail(400, 'Provide a valid lesson_id and section_id.');
+  }
+  await validateSectionQuestionTarget(lessonId, sectionId);
+  return prisma.quizQuestion.findMany({
+    where: { sectionLessonId: lessonId, sectionId },
+    orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+  });
+});
+
+admin('POST', '/admin/section-questions', async c => {
+  const body = await c.json() as Record<string, unknown>;
+  const lessonId = Number(body.lesson_id);
+  const sectionId = Number(body.section_id);
+  if (![lessonId, sectionId].every(Number.isSafeInteger) || lessonId < 1 || sectionId < 1) {
+    fail(400, 'Provide a valid lesson_id and section_id.');
+  }
+  await validateSectionQuestionTarget(lessonId, sectionId);
+  const fields = sectionQuestionFields(body);
+  const question = await prisma.quizQuestion.create({
+    data: {
+      ...fields,
+      sectionLessonId: lessonId,
+      sectionId,
+      status: 'draft',
+    },
+  });
+  await audit(c.user.id, 'section_question_create', { lessonId, sectionId, questionId: question.id });
+  touch();
+  return { id: question.id, status: question.status };
+});
+
+admin('PUT', '/admin/section-questions/:id', async c => {
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid question ID.');
+  const question = await prisma.quizQuestion.findUnique({ where: { id } });
+  if (!question || question.quizId !== null || !question.sectionLessonId || !question.sectionId) {
+    fail(404, 'Section question not found.');
+  }
+  const body = await c.json() as Record<string, unknown>;
+  const fields = sectionQuestionFields({
+    prompt: body.prompt ?? question.prompt,
+    options: body.options ?? question.options,
+    answer_index: body.answer_index ?? question.answerIndex,
+    explanation: body.explanation ?? question.explanation,
+    sort: body.sort ?? question.sort,
+  });
+  const status = body.status === undefined ? question.status : String(body.status);
+  if (status !== 'draft' && status !== 'approved') fail(400, 'Status must be draft or approved.');
+  const updated = await prisma.quizQuestion.update({
+    where: { id },
+    data: { ...fields, status },
+  });
+  await audit(c.user.id, 'section_question_update', { questionId: id, status });
+  touch();
+  return { id: updated.id, status: updated.status };
+});
+
+admin('DELETE', '/admin/section-questions/:id', async c => {
+  const id = Number(c.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) fail(400, 'Invalid question ID.');
+  const question = await prisma.quizQuestion.findUnique({ where: { id }, select: { quizId: true, sectionLessonId: true } });
+  if (!question || question.quizId !== null || !question.sectionLessonId) fail(404, 'Section question not found.');
+  await prisma.quizQuestion.delete({ where: { id } });
+  await audit(c.user.id, 'section_question_delete', { questionId: id });
+  touch();
+  return { ok: true };
 });
 
 // ── Course progress monitoring ──

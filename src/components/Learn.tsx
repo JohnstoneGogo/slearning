@@ -9,7 +9,13 @@ import DocReader from './DocReader';
 
 interface L { id: number; title: string; kind: string; minutes: number; preview: boolean }
 interface Course { id: number; title: string; lessons: L[] }
-interface Full extends L { content: string | null; url: string | null }
+interface PdfSection { id: number; title: string; level: number; start_page: number; end_page: number; words: number; minutes: number; category: { key: string; label: string; hint: string }; excerpt: string }
+interface Full extends L {
+  content: string | null;
+  url: string | null;
+  outline_status?: 'pending' | 'ready' | 'failed';
+  pdf_outline?: { total_pages: number; total_minutes: number; outline_source: string; flat: PdfSection[] } | null;
+}
 interface Prog { done: number[]; completed: boolean }
 
 export default function Learn({ id }: { id: string }) {
@@ -34,7 +40,7 @@ export default function Learn({ id }: { id: string }) {
   const body = locked ? <div className="card"><h3>This lesson is for active members</h3><p className="muted">{locked}</p><Link className="btn primary" href="/activate">Activate account</Link></div>
     : !lesson ? <div className="skel" style={{ height: 240 }} />
     : lesson.kind === 'video' ? (!lesson.url ? <p className="muted">Video coming soon.</p> : /\/embed\//.test(lesson.url) ? <iframe className="embed" src={lesson.url} allow="fullscreen" title={lesson.title} /> : <video className="embed" src={lesson.url} controls playsInline preload="metadata" />)
-    : lesson.kind === 'pdf' ? (lesson.content || lesson.url ? <DocReader title={lesson.title} text={lesson.content || ''} pdfUrl={lesson.url} /> : <p className="muted">eBook coming soon.</p>)
+    : lesson.kind === 'pdf' ? (lesson.content || lesson.url ? <DocReader lessonId={lesson.id} title={lesson.title} text={lesson.content || ''} pdfUrl={lesson.url} isPdfLesson pdfOutline={lesson.outline_status === 'ready' ? lesson.pdf_outline : null} /> : <p className="muted">eBook coming soon.</p>)
     : lesson.kind === 'ebook' ? <DocReader title={lesson.title} text={lesson.content || ''} pdfUrl={lesson.url} />
     : <DocReader title={lesson.title} text={lesson.content || ''} />;
   return <div className="wrap"><section>

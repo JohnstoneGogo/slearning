@@ -12,6 +12,9 @@ import { isLessonInPublishedCourse } from '../lesson-access';
 import { canAccessCourse } from '../course-access';
 import { createPrivateFileUrl, uploadPublicFile } from '../storage';
 import * as data from '../data';
+import { readPdfOutline } from '../../lib/pdf-outline';
+import { canReadSectionPage } from '../../lib/section-access';
+import { gradeSectionAttempt, isSectionUnlocked } from '../../lib/section-quiz';
 import '../payments';
 
 const BCRYPT_ROUNDS = 12;
@@ -463,7 +466,338 @@ member('GET', '/lessons/:id', async ({ user, params }) => {
     data.getLessonResources(l.id),
     data.getQuizForLesson(l.id, user.id),
   ]);
-  return { ...l, url: l.url?.startsWith('private:') ? signedPath(l.url.slice(8)) : l.url, resources, quiz };
+  return {
+    ...l,
+    url: l.kind === 'pdf' ? null : l.url?.startsWith('private:') ? signedPath(l.url.slice(8)) : l.url,
+    resources,
+    quiz,
+  };
+});
+
+member('GET', '/lessons/:id/outline', async ({ user, params }) => {
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: +params.id },
+    select: {
+      id: true, courseId: true, kind: true, preview: true, url: true,
+      pdfOutline: true, outlineStatus: true,
+      course: { select: { published: true } },
+    },
+  });
+  if (!lesson) fail(404, 'PDF lesson not found.');
+  if (lesson!.kind !== 'pdf' || !lesson!.course.published) fail(404, 'PDF lesson not found.');
+  if (!lesson!.preview) {
+    const enrollment = await prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId: user.id, courseId: lesson!.courseId } },
+      select: { userId: true },
+    });
+    if (!enrollment) fail(403, 'Enroll in this course to view the full lesson outline.');
+  }
+  const outline = lesson!.outlineStatus === 'ready' ? readPdfOutline(lesson!.pdfOutline) : null;
+  if (!outline) fail(404, 'PDF outline is not available.');
+  return { pdf_outline: outline };
+});
+
+async function loadPdfSection(lessonId: number, sectionId: number) {
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    select: {
+      id: true, courseId: true, kind: true, preview: true, url: true,
+      pdfOutline: true, outlineStatus: true, course: { select: { published: true } },
+    },
+  });
+  if (!lesson || lesson.kind !== 'pdf' || !lesson.course.published) fail(404, 'PDF lesson not found.');
+  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
+  if (!outline) fail(404, 'PDF outline is not available.');
+  const index = outline.flat.findIndex(section => section.id === sectionId);
+  if (index < 0) fail(404, 'PDF section not found.');
+  const section = outline.flat[index];
+  if (!section.start_page || !section.end_page) fail(404, 'PDF section has no page range.');
+  return { lesson, outline, section, index };
+}
+
+async function requireSectionAccess(userId: number, lesson: { courseId: number; preview: boolean }) {
+  if (lesson.preview) return;
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId, courseId: lesson.courseId } },
+    select: { userId: true },
+  });
+  if (!enrollment) fail(403, 'Enroll in this course to access this section.');
+}
+
+async function requirePreviousSectionComplete(
+  userId: number,
+  lessonId: number,
+  sections: NonNullable<ReturnType<typeof readPdfOutline>>['flat'],
+  index: number,
+) {
+  if (index === 0) return;
+  const previous = sections[index - 1];
+  const progress = await prisma.sectionProgress.findUnique({
+    where: { userId_lessonId_sectionId: { userId, lessonId, sectionId: previous.id } },
+    select: { completedAt: true },
+  });
+  if (!progress?.completedAt) fail(403, 'Pass the previous section quiz to unlock this section.');
+}
+
+member('GET', '/lessons/:id/sections/progress', async ({ user, params }) => {
+  const lessonId = Number(params.id);
+  if (!Number.isSafeInteger(lessonId) || lessonId < 1) fail(400, 'Invalid lesson ID.');
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    select: { id: true, courseId: true, kind: true, preview: true, pdfOutline: true, outlineStatus: true, course: { select: { published: true } } },
+  });
+  if (!lesson || lesson.kind !== 'pdf' || !lesson.course.published) fail(404, 'PDF lesson not found.');
+  await requireSectionAccess(user.id, lesson);
+  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
+  if (!outline) fail(404, 'PDF outline is not available.');
+  const progress = await prisma.sectionProgress.findMany({
+    where: { userId: user.id, lessonId },
+    select: { sectionId: true, lastPageViewed: true, bestScore: true, attempts: true, completedAt: true },
+  });
+  const bySection = new Map(progress.map(row => [row.sectionId, row]));
+  return {
+    sections: outline.flat.map((section, index) => {
+      const current = bySection.get(section.id);
+      const previous = index > 0 ? bySection.get(outline.flat[index - 1].id) : undefined;
+      return {
+        section_id: section.id,
+        unlocked: isSectionUnlocked(index, Boolean(current?.completedAt), Boolean(previous?.completedAt)),
+        completed: Boolean(current?.completedAt),
+        best_score: current?.bestScore ?? 0,
+        attempts: current?.attempts ?? 0,
+      };
+    }),
+  };
+});
+
+pub('GET', '/lessons/:id/sections/:sectionId/pages/:page', async ({ params, req }) => {
+  const lessonId = Number(params.id);
+  const sectionId = Number(params.sectionId);
+  const pageNumber = Number(params.page);
+  if (![lessonId, sectionId, pageNumber].every(Number.isSafeInteger) ||
+      lessonId < 1 || sectionId < 1 || pageNumber < 1) {
+    fail(400, 'Invalid lesson, section, or page number.');
+  }
+
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    select: {
+      id: true, kind: true, preview: true, url: true, pdfOutline: true, outlineStatus: true,
+      courseId: true, course: { select: { published: true } },
+    },
+  }) ?? fail(404, 'PDF lesson not found.');
+  if (lesson.kind !== 'pdf' || !lesson.course.published) fail(404, 'PDF lesson not found.');
+
+  let user = await userFrom(req).catch(() => null);
+  let enrolled = false;
+  if (!lesson.preview) {
+    user ??= fail(403, 'Enroll in this course to read this section.');
+    enrolled = Boolean(await prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId: user.id, courseId: lesson.courseId } },
+      select: { userId: true },
+    }));
+  }
+
+  const outline = lesson.outlineStatus === 'ready' ? readPdfOutline(lesson.pdfOutline) : null;
+  const section = outline?.flat.find(item => item.id === sectionId);
+  if (!section) fail(404, 'PDF section not found.');
+  const sectionIndex = outline!.flat.findIndex(item => item.id === sectionId);
+  if (user) await requirePreviousSectionComplete(user.id, lesson.id, outline!.flat, sectionIndex);
+  if (!canReadSectionPage(lesson.preview, enrolled, pageNumber, section!.start_page ?? 0, section!.end_page ?? 0)) {
+    fail(lesson.preview || enrolled ? 416 : 403, lesson.preview || enrolled
+      ? 'Requested page is outside this section.'
+      : 'Enroll in this course to read this section.');
+  }
+  const pdfObject = lesson.url?.startsWith('private:')
+    ? lesson.url
+    : fail(404, 'PDF file is not available.');
+
+  const rendererUrl = process.env.PDF_RENDERER_URL?.trim().replace(/\/+$/, '');
+  const rendererToken = process.env.PDF_RENDERER_TOKEN;
+  if (!rendererUrl || !rendererToken) fail(503, 'PDF page preview is not configured.');
+
+  const signedUrl = await createPrivateFileUrl(pdfObject.slice('private:'.length), 300);
+  const rendered = await fetch(`${rendererUrl}/render`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${rendererToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url: signedUrl, page: pageNumber }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!rendered.ok || !rendered.headers.get('content-type')?.startsWith('image/png')) {
+    fail(rendered.status === 404 ? 404 : 502, 'This PDF page could not be rendered. Please retry.');
+  }
+  const image = await rendered.arrayBuffer();
+  if (image.byteLength > 20 * 1024 * 1024) fail(502, 'Rendered PDF page exceeds the image size limit.');
+  if (user && pageNumber === section.end_page) {
+    await prisma.sectionProgress.upsert({
+      where: { userId_lessonId_sectionId: { userId: user.id, lessonId: lesson.id, sectionId } },
+      create: { userId: user.id, lessonId: lesson.id, sectionId, lastPageViewed: pageNumber },
+      update: { lastPageViewed: pageNumber },
+    });
+  }
+  return new Response(image, {
+    headers: {
+      'Content-Type': 'image/png',
+      'Content-Length': String(image.byteLength),
+      'Cache-Control': 'private, max-age=300',
+      'X-Content-Type-Options': 'nosniff',
+      Vary: 'Cookie',
+    },
+  });
+});
+
+member('GET', '/lessons/:id/sections/:sectionId/quiz', async ({ user, params }) => {
+  const lessonId = Number(params.id);
+  const sectionId = Number(params.sectionId);
+  if (![lessonId, sectionId].every(Number.isSafeInteger) || lessonId < 1 || sectionId < 1) {
+    fail(400, 'Invalid lesson or section ID.');
+  }
+  const context = await loadPdfSection(lessonId, sectionId);
+  await requireSectionAccess(user.id, context.lesson);
+  await requirePreviousSectionComplete(user.id, lessonId, context.outline.flat, context.index);
+  const progress = await prisma.sectionProgress.findUnique({
+    where: { userId_lessonId_sectionId: { userId: user.id, lessonId, sectionId } },
+    select: { lastPageViewed: true, bestScore: true, attempts: true, completedAt: true, quizQuestionIndex: true },
+  });
+  if (!progress?.completedAt && (progress?.lastPageViewed ?? 0) < context.section.end_page!) {
+    fail(409, 'Read through the final page to unlock the knowledge check.');
+  }
+  const questions = await prisma.quizQuestion.findMany({
+    where: { sectionLessonId: lessonId, sectionId, status: 'approved' },
+    orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+    select: { id: true, prompt: true, options: true },
+  });
+  if (!questions.length) fail(409, 'No approved questions are available for this section yet.');
+  const safeQuestions = questions.map(question => {
+    const options = Array.isArray(question.options) ? question.options : [];
+    if (typeof question.prompt !== 'string' || options.length < 2 || options.some(option => typeof option !== 'string')) {
+      fail(500, 'An approved question has invalid options.');
+    }
+    return { id: question.id, prompt: question.prompt, options };
+  });
+  return {
+    pass_percent: 70,
+    best_score: progress?.bestScore ?? 0,
+    attempts: progress?.attempts ?? 0,
+    completed: Boolean(progress?.completedAt),
+    question_index: progress?.quizQuestionIndex ?? 0,
+    questions: safeQuestions,
+  };
+});
+
+member('POST', '/lessons/:id/sections/:sectionId/quiz/answer', async ({ user, params, json }) => {
+  const lessonId = Number(params.id);
+  const sectionId = Number(params.sectionId);
+  if (![lessonId, sectionId].every(Number.isSafeInteger) || lessonId < 1 || sectionId < 1) {
+    fail(400, 'Invalid lesson or section ID.');
+  }
+  const context = await loadPdfSection(lessonId, sectionId);
+  await requireSectionAccess(user.id, context.lesson);
+  await requirePreviousSectionComplete(user.id, lessonId, context.outline.flat, context.index);
+  const progress = await prisma.sectionProgress.findUnique({
+    where: { userId_lessonId_sectionId: { userId: user.id, lessonId, sectionId } },
+    select: { lastPageViewed: true, completedAt: true, quizQuestionIndex: true, quizAnswers: true },
+  });
+  if (!progress?.completedAt && (progress?.lastPageViewed ?? 0) < context.section.end_page!) {
+    fail(409, 'Read through the final page to unlock the knowledge check.');
+  }
+
+  const raw = await json() as Record<string, unknown>;
+  const currentQuestionId = Number(raw.question_id);
+  const selectedIndex = Number(raw.answer_index);
+  if (!Number.isSafeInteger(currentQuestionId) || !Number.isSafeInteger(selectedIndex)) {
+    fail(400, 'Invalid quiz answer.');
+  }
+  if (!progress) fail(409, 'Open the knowledge check after reaching the final page.');
+
+  const questions = await prisma.quizQuestion.findMany({
+    where: { sectionLessonId: lessonId, sectionId, status: 'approved' },
+    orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+    select: { id: true, prompt: true, options: true, answerIndex: true, explanation: true },
+  });
+  if (!questions.length) fail(409, 'No approved questions are available for this section yet.');
+  const questionIndex = progress.quizQuestionIndex;
+  const current = questions[questionIndex];
+  if (!current || current.id !== currentQuestionId) fail(409, 'This quiz answer is out of sequence. Reload the quiz and try again.');
+  if (selectedIndex < 0 || !Array.isArray(current.options) || selectedIndex >= current.options.length) {
+    fail(400, 'Select a valid answer.');
+  }
+  const previousAnswers: { questionId: number; answerIndex: number }[] = [];
+  if (Array.isArray(progress.quizAnswers)) {
+    for (const value of progress.quizAnswers) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) fail(500, 'Saved quiz progress is invalid.');
+      const saved = value as Record<string, unknown>;
+      if (!Number.isSafeInteger(saved.questionId) || !Number.isSafeInteger(saved.answerIndex)) {
+        fail(500, 'Saved quiz progress is invalid.');
+      }
+      previousAnswers.push({ questionId: saved.questionId as number, answerIndex: saved.answerIndex as number });
+    }
+  }
+  const answers = [...previousAnswers, { questionId: current.id, answerIndex: selectedIndex }];
+  const finish = questionIndex === questions.length - 1;
+  const feedback = {
+    question_id: current.id,
+    selected_index: selectedIndex,
+    correct_index: current.answerIndex,
+    correct: selectedIndex === current.answerIndex,
+    explanation: current.explanation,
+  };
+  if (!finish) {
+    const updatedCount = await prisma.$executeRaw`
+      UPDATE "SectionProgress"
+      SET "quizAnswers" = ${JSON.stringify(answers)}::jsonb,
+          "quizQuestionIndex" = ${questionIndex + 1}
+      WHERE "userId" = ${user.id} AND "lessonId" = ${lessonId} AND "sectionId" = ${sectionId}
+        AND "quizQuestionIndex" = ${questionIndex}
+    `;
+    if (updatedCount !== 1) fail(409, 'This answer was already submitted. Reload the quiz to continue.');
+    return { feedback, next_question_index: questionIndex + 1 };
+  }
+
+  const result = gradeSectionAttempt(
+    questions.map(question => ({ id: question.id, answerIndex: question.answerIndex })),
+    answers,
+  );
+  if (!result || answers.length !== questions.length) fail(400, 'Answer every quiz question before submitting.');
+  const passed = result!.passed;
+  const updatedCount = await prisma.$executeRaw`
+    INSERT INTO "SectionProgress"
+      ("userId", "lessonId", "sectionId", "lastPageViewed", "bestScore", "attempts",
+       "quizQuestionIndex", "quizAnswers", "completedAt")
+    VALUES
+      (${user.id}, ${lessonId}, ${sectionId}, ${context.section.end_page}, ${result!.percent}, 1, 0, '[]'::jsonb,
+       CASE WHEN ${passed} THEN CURRENT_TIMESTAMP ELSE NULL END)
+    ON CONFLICT ("userId", "lessonId", "sectionId") DO UPDATE SET
+      "lastPageViewed" = GREATEST(COALESCE("SectionProgress"."lastPageViewed", 0), EXCLUDED."lastPageViewed"),
+      "bestScore" = GREATEST("SectionProgress"."bestScore", EXCLUDED."bestScore"),
+      "attempts" = "SectionProgress"."attempts" + 1,
+      "quizQuestionIndex" = 0,
+      "quizAnswers" = '[]'::jsonb,
+      "completedAt" = CASE
+        WHEN EXCLUDED."completedAt" IS NOT NULL THEN COALESCE("SectionProgress"."completedAt", EXCLUDED."completedAt")
+        ELSE "SectionProgress"."completedAt"
+      END
+    WHERE "SectionProgress"."quizQuestionIndex" = ${questionIndex}
+  `;
+  if (updatedCount !== 1) fail(409, 'This answer was already submitted. Reload the quiz to continue.');
+  const updated = await prisma.sectionProgress.findUnique({
+    where: { userId_lessonId_sectionId: { userId: user.id, lessonId, sectionId } },
+    select: { bestScore: true, attempts: true, completedAt: true },
+  });
+  return {
+    feedback,
+    score: result!.score,
+    total: result!.total,
+    percent: result!.percent,
+    passed,
+    pass_percent: 70,
+    best_score: updated?.bestScore ?? result!.percent,
+    attempts: updated?.attempts ?? 1,
+    completed: Boolean(updated?.completedAt),
+  };
 });
 
 // ── Quizzes ──

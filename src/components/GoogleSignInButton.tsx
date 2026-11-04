@@ -33,11 +33,11 @@ export default function GoogleSignInButton({ label = 'Continue with Google' }: {
   return (
     <div className="google-signin">
       <button className="btn google-signin-button" type="button" onClick={signIn} disabled={busy} aria-busy={busy}>
-        <svg viewBox="0 0 48 48" width="19" height="19" aria-hidden="true">
-          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" transform="translate(0 5)" />
-          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.4-4.55H24v9.02h12.94a11.05 11.05 0 0 1-4.8 7.25l7.74 6C44.4 38.05 46.98 31.9 46.98 24.55Z" />
-          <path fill="#FBBC05" d="M10.53 28.59a14.4 14.4 0 0 1 0-9.18l-7.98-6.2a23.9 23.9 0 0 0 0 21.58l7.98-6.2Z" transform="translate(0 5)" />
-          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.91-5.78l-7.74-6c-2.15 1.45-4.9 2.3-8.17 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.2C6.51 42.62 14.62 48 24 48Z" transform="translate(0 -5)" />
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.22 3.31v2.77h3.58c2.1-1.94 3.28-4.8 3.28-8.09Z" />
+          <path fill="#34A853" d="M12 23c3.02 0 5.56-1 7.41-2.66l-3.58-2.77c-1 .67-2.27 1.07-3.83 1.07-2.94 0-5.43-1.98-6.32-4.65H1.99v2.84A11 11 0 0 0 12 23Z" />
+          <path fill="#FBBC05" d="M5.68 13.99a6.6 6.6 0 0 1 0-3.98V7.17H1.99a11 11 0 0 0 0 9.66l3.69-2.84Z" />
+          <path fill="#EA4335" d="M12 5.36c1.64 0 3.11.56 4.27 1.67l3.2-3.2C17.55 1.99 15.02 1 12 1A11 11 0 0 0 1.99 7.17l3.69 2.84C6.57 7.34 9.06 5.36 12 5.36Z" />
         </svg>
         {busy ? 'Connecting to Google…' : label}
       </button>

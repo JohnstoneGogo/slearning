@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { CUR, PROD, cached, cfg, fail, signedPath } from './core';
 import { provider } from './providers';
+import { publicPdfOutline } from '../lib/pdf-outline';
 
 export const getConfig = () => cached('config', 60, async () => ({
   site: await cfg<Record<string, string>>('site'), reviews: await cfg<any[]>('reviews'), dev: !PROD && !provider().live,
@@ -62,7 +63,25 @@ export const getCourse = async (id: number) => {
     where: { id, published: true },
     include: {
       category: { select: { name: true } },
-      lessons: { orderBy: [{ sort: 'asc' }, { id: 'asc' }], select: { id: true, title: true, kind: true, minutes: true, preview: true, quiz: { select: { id: true, passPercent: true, _count: { select: { questions: true } } } } } },
+      lessons: {
+        orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          title: true,
+          kind: true,
+          minutes: true,
+          preview: true,
+          pdfOutline: true,
+          outlineStatus: true,
+          quiz: {
+            select: {
+              id: true,
+              passPercent: true,
+              _count: { select: { questions: true } },
+            },
+          },
+        },
+      },
       _count: { select: { quizzes: true } },
     },
   }) : null;
@@ -71,7 +90,17 @@ export const getCourse = async (id: number) => {
   return {
     ...rest, category: category?.name ?? null, learn_points: (learnPoints as string[]) || [], skills: skills.split(',').map(s => s.trim()).filter(Boolean),
     is_free: lessons.some(l => l.preview), quiz_count: _count.quizzes,
-    lessons: lessons.map(({ quiz, ...l }) => ({ ...l, quiz: quiz ? { id: quiz.id, pass_percent: quiz.passPercent, questions: quiz._count.questions } : null })),
+    lessons: lessons.map(({ quiz, pdfOutline: rawOutline, outlineStatus, ...lesson }) => {
+      const publicOutline = outlineStatus === 'ready'
+        ? publicPdfOutline(rawOutline, lesson.preview)
+        : null;
+      return {
+        ...lesson,
+        outlineStatus,
+        pdfOutline: lesson.kind === 'pdf' ? publicOutline : null,
+        quiz: quiz ? { id: quiz.id, pass_percent: quiz.passPercent, questions: quiz._count.questions } : null,
+      };
+    }),
   };
 };
 export const getReviews = async (courseId: number) =>

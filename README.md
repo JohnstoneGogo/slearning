@@ -36,6 +36,32 @@ The first upload creates two buckets if they do not exist: `public-media` (publi
 
 To move existing files from `uploads/public` and `uploads/private` and update matching database URLs, run `npm run storage:migrate`. It is safe to re-run and leaves the local files untouched. It stops without changing database URLs if any database image reference has no matching local file; restore that file and run the command again. Private PDFs larger than 50 MiB need a higher allowed upload limit in the Supabase project and bucket before migration. New CMS images, avatars, PDFs, and imported eBook files go directly to Supabase Storage.
 
+## PDF lesson outlines
+Saving a PDF lesson queues outline analysis; it does not parse the PDF inside the web request. Run a separate, persistent worker with access to the same `DATABASE_URL`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY`:
+```bash
+python -m pip install -r requirements-pdf.txt
+npm run pdf:worker
+```
+The worker uses PyMuPDF to prefer PDF bookmarks, fall back to font-size heading detection, then split the document into 10-page sections. Learners see page ranges, excerpts, and estimated study-time badges in the lesson reader. Selecting a section opens only its rendered page images in the learning window; the PDF itself is never sent to the browser. If analysis fails, the lesson remains available without an outline; the CMS shows the analysis status and provides a **Re-analyze** action. Run the worker under a process manager (for example PM2 or systemd) with automatic restart. Existing PDFs are not automatically queued by the migration; backfill selects a small batch of unqueued lessons. Monitor queued jobs that have stalled with:
+```sql
+SELECT id, title, "outlineRequestedAt"
+FROM "Lesson"
+WHERE kind = 'pdf' AND "outlineStatus" = 'pending'
+  AND "outlineRequestedAt" IS NOT NULL
+  AND "outlineRequestedAt" < now() - interval '5 minutes'
+ORDER BY "outlineRequestedAt";
+```
+
+Section reading uses a separate, private PyMuPDF page-renderer service so the browser receives only one page image at a time, never the source PDF. Run it beside the app or on a private worker host, and configure the same random `PDF_RENDERER_TOKEN` in both processes plus `PDF_RENDERER_URL` in the app:
+```bash
+set PDF_RENDERER_TOKEN=<random-secret-at-least-32-characters>
+set SUPABASE_URL=<your-supabase-project-url>
+python scripts/pdf_page_renderer.py
+```
+The renderer binds to localhost by default; if it is on another host, set `PDF_RENDERER_HOST` appropriately and restrict network access to the app. It keeps a bounded in-memory cache for PDF bytes and rendered pages. Section completion is stored in `SectionProgress`; apply the new `20261104170000_add_section_progress` migration before deploying this code. Section pages are available without enrollment only for lessons explicitly marked as free previews.
+
+After applying migrations, existing uploaded PDF lessons can be analyzed in small batches with `npm run pdf:backfill -- --limit=5` (the default limit is 5; run this in an environment with Python/PyMuPDF and the app's database/storage credentials). Add `--include-failed` to retry failed lessons after correcting their files or the cause of the failure. New PDF lessons saved in the CMS are queued automatically, including when a PDF is added to an existing lesson; the persistent `npm run pdf:worker` process must be running to analyze queued uploads. The CMS shows `Queued`, `Ready`, or `Failed`; use the lesson's **Re-analyze** action after fixing a failed file. For Vercel deployments, run the worker and backfill from a separate Python-enabled worker host; do not run PDF analysis in a Vercel request.
+
 ## Google sign-in
 Set the public Supabase anon/publishable key as `SUPABASE_ANON_KEY` or `SUPABASE_PUBLISHABLE_KEY` in the local and production environments before building. The app can reuse the existing server-side `SUPABASE_URL`; set `NEXT_PUBLIC_SUPABASE_URL` only if you want to override it. The Next.js config exposes only the Supabase URL and public anon/publishable key to browser code. Never use or expose `SUPABASE_SERVICE_ROLE_KEY` for sign-in. Enable Google under **Supabase Dashboard > Authentication > Providers**, then add your app callback (for local development, `http://localhost:3000/auth/google/callback`) to Supabase's allowed redirect URLs. Configure the Google OAuth client with the callback URL shown in the Supabase Google provider settings (`https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`). New students finish signup by providing their country and WhatsApp number; existing student accounts can sign in using the same verified Google email.
 

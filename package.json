@@ -14,6 +14,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:import-open-ebooks": "node --env-file=.env --import tsx scripts/import-open-ebooks.ts",
     "storage:migrate": "node --env-file=.env --import tsx scripts/migrate-to-supabase-storage.ts",
+    "pdf:worker": "node --env-file=.env --import tsx scripts/pdf-analysis-worker.ts",
+    "pdf:renderer": "python scripts/pdf_page_renderer.py",
+    "pdf:backfill": "node --env-file=.env --import tsx scripts/backfill-pdf-outlines.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {

@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { getCourse, getReviews } from '@/server/data';
 import { courseCover, Img, Stars } from '@/components/bits';
 import CourseActions from '@/components/CourseActions';
+import CourseSyllabus from '@/components/CourseSyllabus';
 import { money } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
@@ -97,20 +98,7 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
               {/* Syllabus */}
               <h2 className="mt">Course syllabus</h2>
               <p className="muted" style={{ marginBottom: '1rem', fontSize: '.9rem' }}>{course.lessons.length} lessons · {course.minutes} min total</p>
-              {course.lessons.map((l, i) => (
-                <details key={l.id} className="course-lesson-detail">
-                  <summary>
-                    <span className="course-lesson-num">{i + 1}</span>
-                    <span>{l.title}</span>
-                    <span className="course-lesson-meta">
-                      {l.preview && <span className="badge" style={{ marginRight: 6 }}>Free preview</span>}
-                      <span className="muted" style={{ fontSize: '.85rem' }}>
-                      {({ text: 'Reading', video: 'Video', pdf: 'PDF' } as Record<string, string>)[l.kind] || 'Lesson'} · {l.minutes} min
-                      </span>
-                    </span>
-                  </summary>
-                </details>
-              ))}
+              <CourseSyllabus courseId={course.id} lessons={course.lessons} />
               {!course.lessons.length && <p className="muted">Lessons are coming soon.</p>}
 
               {/* Reviews */}
